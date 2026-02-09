@@ -153,20 +153,19 @@ def save_corrected_pressure(
                     ph2_filt = apply_frf(ph2_raw, FS, f_cal, H_cal)
                     ph1_filt = apply_frf(ph1_filt, FS, f_cal_nkd, H_fused_nkd)
                     ph2_filt = apply_frf(ph2_filt, FS, f_cal_nkd, H_fused_nkd)
-
-                spacing_meta = {
-                    "close": {
-                        "spacing_m": 2.8 * delta_i,
-                        "x_PH1": 15e-3 + 0.2 * delta_i,
-                        "x_PH2": 15e-3 + 0.2 * delta_i + 2.8 * delta_i,
-                    },
-                    "far": {
-                        "spacing_m": 3.2 * delta_i,
-                        "x_PH2": 15e-3,
-                        "x_PH1": 15e-3 + 3.2 * delta_i,
-                    },
-                }
-                g_corr = g_corrected.create_group(sp)
+                    spacing_meta = {
+                        "close": {
+                            "spacing_m": 2.8 * delta_i,
+                            "x_PH1": 15e-3 + 0.2 * delta_i,
+                            "x_PH2": 15e-3 + 0.2 * delta_i + 2.8 * delta_i,
+                        },
+                        "far": {
+                            "spacing_m": 3.2 * delta_i,
+                            "x_PH2": 15e-3,
+                            "x_PH1": 15e-3 + 3.2 * delta_i,
+                        },
+                    }
+                    g_corr = g_corrected.create_group(sp)
                     g_corr.create_dataset("PH1_Pa", data=ph1_filt)
                     g_corr.create_dataset("PH2_Pa", data=ph2_filt)
                     meta = spacing_meta.get(sp)

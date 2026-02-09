@@ -33,19 +33,19 @@ def run_all(
     if run_nc_calibs:
         calibs.save_NC_calibs()
 
-    print("[2a] fs_raw")
+    print("[2] fs_raw")
     fs_raw.save_raw_fs_pressure(
         spacings=spacings,
         include_nc_calib=include_nc_calib_raw,
     )
 
-    print("[2b] pw_raw")
+    print("[3] pw_raw")
     pw_raw.save_raw_ph_pressure(spacings=spacings)
 
-    print("[3a] fs_proc")
+    print("[4a] fs_proc")
     fs_proc.save_prod_fs_pressure(spacings=spacings)
 
-    print("[3b] pw_proc")
+    print("[4b] pw_proc")
     pw_proc.save_corrected_pressure(spacings=spacings)
 
 
