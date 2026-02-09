@@ -82,18 +82,7 @@ def save_raw_ph_pressure(
     analog_LP_filter = cfg.ANALOG_LP_FILTER
     spacings = cfg.SPACINGS if spacings is None else spacings
 
-    spacing_meta = {
-        "close": {
-            "spacing_m": 2.8 * DELTA,
-            "x_PH1": 15e-3 + 0.2 * DELTA,
-            "x_PH2": 15e-3 + 0.2 * DELTA + 2.8 * DELTA,
-        },
-        "far": {
-            "spacing_m": 3.2 * DELTA,
-            "x_PH2": 15e-3,
-            "x_PH1": 15e-3 + 3.2 * DELTA,
-        },
-    }
+    spacing_meta = None
 
     ph_raw = cfg.PH_RAW_FILE
     os.makedirs(Path(ph_raw).parent, exist_ok=True)
@@ -124,18 +113,32 @@ def save_raw_ph_pressure(
             gL = g_fs.create_group(L)
             # condition-level metadata (numeric + units separate)
             rho, mu, nu = air_props_from_gauge(psigs[i], Tk[i])
+            delta_i = float(DELTA[i])
             gL.attrs['psig'] = psigs[i]          # unit: psi(g)
             gL.attrs['u_tau'] = u_tau[i]         # unit: m/s
             gL.attrs['nu'] = nu
             gL.attrs['rho'] = rho
             gL.attrs['mu'] = mu
-            gL.attrs['Re_tau'] = u_tau[i]*DELTA / nu         # unit: m/s
+            gL.attrs['Re_tau'] = u_tau[i] * delta_i / nu         # unit: m/s
+            gL.attrs['delta'] = delta_i
             gL.attrs['u_tau_rel_unc'] = u_tau_unc[i]
             gL.attrs['T_K'] = Tk[i]
             gL.attrs['analog_LP_filter_Hz'] = analog_LP_filter[i]
             gL.attrs['Ue_m_per_s'] = float(Ue[i])
             gL.attrs['units'] = ['psig: psi(g)', 'u_tau: m/s', 'nu: m^2/s', 'rho: kg/m^3', 'mu: Pa*s', 'T_K: K', 'analog_LP_filter_Hz: Hz']
 
+            spacing_meta = {
+                "close": {
+                    "spacing_m": 2.8 * delta_i,
+                    "x_PH1": 15e-3 + 0.2 * delta_i,
+                    "x_PH2": 15e-3 + 0.2 * delta_i + 2.8 * delta_i,
+                },
+                "far": {
+                    "spacing_m": 3.2 * delta_i,
+                    "x_PH2": 15e-3,
+                    "x_PH1": 15e-3 + 3.2 * delta_i,
+                },
+            }
             seen_any = False
             for sp in spacings:
                 mat_path = Path(RAW_BASE) / f"{sp}/{L}.mat"

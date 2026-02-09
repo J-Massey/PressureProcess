@@ -25,7 +25,7 @@ WINDOW = cfg.WINDOW
 R = cfg.R        # J/kg/K
 PSI_TO_PA = cfg.PSI_TO_PA
 P_ATM = cfg.P_ATM
-DELTA = cfg.DELTA  # m, bl-height of 'channel'
+DELTA = cfg.DELTA  # m, bl-height of channel
 TDEG = cfg.TDEG
 
 # =============================================================================
@@ -77,18 +77,7 @@ def save_corrected_pressure(
     analog_LP_filter = cfg.ANALOG_LP_FILTER
     spacings = cfg.SPACINGS if spacings is None else spacings
 
-    spacing_meta = {
-        "close": {
-            "spacing_m": 2.8 * DELTA,
-            "x_PH1": 15e-3 + 0.2 * DELTA,
-            "x_PH2": 15e-3 + 0.2 * DELTA + 2.8 * DELTA,
-        },
-        "far": {
-            "spacing_m": 3.2 * DELTA,
-            "x_PH2": 15e-3,
-            "x_PH1": 15e-3 + 3.2 * DELTA,
-        },
-    }
+    spacing_meta = None
 
     ph_processed = cfg.PH_PROCESSED_FILE
     ph_raw = cfg.PH_RAW_FILE
@@ -118,12 +107,14 @@ def save_corrected_pressure(
             gL = g_fs.create_group(L)
             # condition-level metadata (numeric + units separate)
             rho, mu, nu = air_props_from_gauge(psigs[i], Tk[i])
+            delta_i = float(DELTA[i])
             gL.attrs['psig'] = psigs[i]          # unit: psi(g)
             gL.attrs['u_tau'] = u_tau[i]         # unit: m/s
             gL.attrs['nu'] = nu
             gL.attrs['rho'] = rho
             gL.attrs['mu'] = mu
-            gL.attrs['Re_tau'] = u_tau[i]*DELTA / nu         # unit: m/s
+            gL.attrs['Re_tau'] = u_tau[i] * delta_i / nu         # unit: m/s
+            gL.attrs['delta'] = delta_i
             gL.attrs['u_tau_rel_unc'] = u_tau_unc[i]
             gL.attrs['T_K'] = Tk[i]
             gL.attrs['analog_LP_filter_Hz'] = analog_LP_filter[i]
@@ -163,7 +154,19 @@ def save_corrected_pressure(
                     ph1_filt = apply_frf(ph1_filt, FS, f_cal_nkd, H_fused_nkd)
                     ph2_filt = apply_frf(ph2_filt, FS, f_cal_nkd, H_fused_nkd)
 
-                    g_corr = g_corrected.create_group(sp)
+                spacing_meta = {
+                    "close": {
+                        "spacing_m": 2.8 * delta_i,
+                        "x_PH1": 15e-3 + 0.2 * delta_i,
+                        "x_PH2": 15e-3 + 0.2 * delta_i + 2.8 * delta_i,
+                    },
+                    "far": {
+                        "spacing_m": 3.2 * delta_i,
+                        "x_PH2": 15e-3,
+                        "x_PH1": 15e-3 + 3.2 * delta_i,
+                    },
+                }
+                g_corr = g_corrected.create_group(sp)
                     g_corr.create_dataset("PH1_Pa", data=ph1_filt)
                     g_corr.create_dataset("PH2_Pa", data=ph2_filt)
                     meta = spacing_meta.get(sp)

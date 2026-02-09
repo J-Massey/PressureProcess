@@ -32,7 +32,7 @@ class Config:
     R: float = 287.05        # J/kg/K
     PSI_TO_PA: float = 6_894.76
     P_ATM: float = 101_325.0
-    DELTA: float = 0.035  # m, bl-height of 'channel'
+    DELTA: tuple[float, float, float] = (0.035, 0.035, 0.035)  # m, bl-height of channel
     TDEG: tuple[float, float, float] = (18.0, 20.0, 22.0)
     TPLUS_CUT: float = 10.0  # picked so that we cut at half the inner peak
 

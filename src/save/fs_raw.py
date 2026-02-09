@@ -107,12 +107,14 @@ def save_raw_fs_pressure(
             gL = g_fs.create_group(L)
             # condition-level metadata (numeric + units separate)
             rho, mu, nu = air_props_from_gauge(psigs[i], Tk[i])
+            delta_i = float(DELTA[i])
             gL.attrs['psig'] = psigs[i]          # unit: psi(g)
             gL.attrs['u_tau'] = u_tau[i]         # unit: m/s
             gL.attrs['nu'] = nu
             gL.attrs['rho'] = rho
             gL.attrs['mu'] = mu
-            gL.attrs['Re_tau'] = u_tau[i]*DELTA / nu         # unit: m/s
+            gL.attrs['Re_tau'] = u_tau[i] * delta_i / nu         # unit: m/s
+            gL.attrs['delta'] = delta_i
             gL.attrs['u_tau_rel_unc'] = u_tau_unc[i]
             gL.attrs['T_K'] = Tk[i]
             gL.attrs['analog_LP_filter_Hz'] = analog_LP_filter[i]
