@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Pressure processing for two microphones"
 readme = "README.md"
 dependencies = [
+  "h5py",
+  "tqdm",
   "numpy",
   "scipy",
   "matplotlib",

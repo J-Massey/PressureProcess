@@ -6,6 +6,8 @@ setup(
     version="0.1.0",
     packages=find_packages(),              # Automatically find the package directory
     install_requires=[
+        "h5py",
+        "tqdm",
         "numpy",
         "scipy",
         "matplotlib",

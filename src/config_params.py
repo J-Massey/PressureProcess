@@ -5,13 +5,16 @@ Keep all hard-coded paths and constants here so the rest of the pipeline stays c
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
 class Config:
     # --- Experiment/run metadata defaults ---
-    ROOT_DIR: str = "data/phase1"
+    ROOT_DIR: str = field(
+        default_factory=lambda: os.getenv("PRESSUREPROCESS_ROOT_DIR", "data/phase1")
+    )
     LABELS: tuple[str, str, str] = ("0psig", "50psig", "100psig")
     PSIGS: tuple[float, float, float] = (0.0, 50.0, 100.0)
     U_TAU: tuple[float, float, float] = (0.537, 0.522, 0.506)
@@ -37,15 +40,15 @@ class Config:
     TPLUS_CUT: float = 10.0  # picked so that we cut at half the inner peak
 
     # --- Data paths ---
-    RAW_CAL_BASE: str = f"{ROOT_DIR}/raw_calib"
-    RAW_BASE: str = f"{ROOT_DIR}/raw_wallp"
+    RAW_CAL_BASE: str = field(init=False)
+    RAW_BASE: str = field(init=False)
     
     # --- Output paths ---
-    TF_BASE: str = f"{ROOT_DIR}/calibration"
-    PH_RAW_FILE: str = f"{ROOT_DIR}/pressure/G_wallp_SU_raw.hdf5"
-    PH_PROCESSED_FILE: str = f"{ROOT_DIR}/pressure/G_wallp_SU_production.hdf5"
-    NKD_RAW_FILE: str = f"{ROOT_DIR}/pressure/F_freestreamp_SU_raw.hdf5"
-    NKD_PROCESSED_FILE: str = f"{ROOT_DIR}/pressure/F_freestreamp_SU_production.hdf5"
+    TF_BASE: str = field(init=False)
+    PH_RAW_FILE: str = field(init=False)
+    PH_PROCESSED_FILE: str = field(init=False)
+    NKD_RAW_FILE: str = field(init=False)
+    NKD_PROCESSED_FILE: str = field(init=False)
 
 
     # --- Sensor constants ---
@@ -61,6 +64,26 @@ class Config:
         default_factory=lambda: {"nc": 1.0, "PH1": 1.0, "PH2": 1.0, "NC": 1.0}
     )
 
-    # No derived fields needed.
+    def __post_init__(self) -> None:
+        root = self.ROOT_DIR.rstrip("/")
+        object.__setattr__(self, "RAW_CAL_BASE", f"{root}/raw_calib")
+        object.__setattr__(self, "RAW_BASE", f"{root}/raw_wallp")
+        object.__setattr__(self, "TF_BASE", f"{root}/calibration")
+        object.__setattr__(self, "PH_RAW_FILE", f"{root}/pressure/G_wallp_SU_raw.hdf5")
+        object.__setattr__(
+            self,
+            "PH_PROCESSED_FILE",
+            f"{root}/pressure/G_wallp_SU_production.hdf5",
+        )
+        object.__setattr__(
+            self,
+            "NKD_RAW_FILE",
+            f"{root}/pressure/F_freestreamp_SU_raw.hdf5",
+        )
+        object.__setattr__(
+            self,
+            "NKD_PROCESSED_FILE",
+            f"{root}/pressure/F_freestreamp_SU_production.hdf5",
+        )
 
     

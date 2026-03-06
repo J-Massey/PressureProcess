@@ -17,10 +17,33 @@ or:
 python -m pip install .
 ```
 
+Docker
+------
+Build:
+```
+docker build -t pressureprocess .
+```
+
+Run (mount local `data/` and `figures/`):
+```
+docker run --rm \
+  --memory=8g \
+  --cpus=4 \
+  -e PRESSUREPROCESS_ROOT_DIR=data/phase1 \
+  -e TORCH_NUM_THREADS=1 \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/figures:/app/figures" \
+  pressureprocess
+```
+
+Notes:
+- `PRESSUREPROCESS_ROOT_DIR` controls where the pipeline looks for inputs and writes outputs.
+- The image installs CPU-only PyTorch and conservative thread defaults to reduce memory pressure on smaller hosts.
+
 Usage overview
 --------------
 1) Define the required file structure and raw variable names.
-2) Set user parameters in `src/config_params.py`.
+2) Set user parameters in `src/config_params.py` and/or `PRESSUREPROCESS_ROOT_DIR`.
 3) Run the pipeline with `python -m src.run_pipeline`.
 
 Required file structure
@@ -94,16 +117,16 @@ channelData_nofacitynoise
 Configure user parameters
 -------------------------
 Edit `src/config_params.py` to set:
- - ROOT_DIR
- - RAW_CAL_BASE, RAW_BASE
- - TF_BASE
- - PH_RAW_FILE, PH_PROCESSED_FILE
- - NKD_RAW_FILE, NKD_PROCESSED_FILE
+ - ROOT_DIR (or set env var `PRESSUREPROCESS_ROOT_DIR`)
  - LABELS, PSIGS, U_TAU, U_TAU_REL_UNC, U_E, ANALOG_LP_FILTER, F_CUTS
  - SENSITIVITIES_V_PER_PA
  - SPACINGS
  - RUN_NC_CALIBS
  - INCLUDE_NC_CALIB_RAW
+
+Path fields (`RAW_CAL_BASE`, `RAW_BASE`, `TF_BASE`, `PH_RAW_FILE`,
+`PH_PROCESSED_FILE`, `NKD_RAW_FILE`, `NKD_PROCESSED_FILE`) are derived from
+`ROOT_DIR`.
 
 Sarah iso option
 ----------------
