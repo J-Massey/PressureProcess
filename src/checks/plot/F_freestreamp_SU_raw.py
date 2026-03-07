@@ -4,17 +4,14 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import welch, get_window
-import scienceplots
 from icecream import ic
 
 from src.config_params import Config
+from src.checks.plot._style import apply_plot_style
 
 cfg = Config()
 
-plt.style.use(["science", "grid"])
-plt.rcParams["font.size"] = 10.5
-plt.rc("text", usetex=True)
-plt.rc("text.latex", preamble=r"\usepackage{mathpazo}")
+apply_plot_style()
 
 # -------------------- constants --------------------
 FS = cfg.FS

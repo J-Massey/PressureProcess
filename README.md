@@ -42,6 +42,8 @@ Notes:
 - The image installs CPU-only PyTorch and conservative thread defaults to reduce memory pressure on smaller hosts.
 - `--user "$(id -u):$(id -g)"` avoids host/container ownership mismatches.
 - `:Z` on bind mounts applies SELinux relabeling (needed on Fedora/RHEL/CentOS systems).
+- `PRESSUREPROCESS_USE_TEX` controls LaTeX labels in plots: `auto` (default), `true`, `false`.
+  In `auto`, LaTeX is used only if a `latex` binary is available.
 
 Usage overview
 --------------
