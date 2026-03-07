@@ -43,6 +43,7 @@ docker run --rm \
   --cpus=4 \
   --user "$(id -u):$(id -g)" \
   -e PRESSUREPROCESS_ROOT_DIR=data/phase1 \
+  -e PRESSUREPROCESS_USE_TEX=auto \
   -e TORCH_NUM_THREADS=1 \
   -v "$(pwd)/data:/app/data:Z" \
   -v "$(pwd)/figures:/app/figures:Z" \
