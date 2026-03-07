@@ -29,16 +29,19 @@ Run (mount local `data/` and `figures/`):
 docker run --rm \
   --memory=8g \
   --cpus=4 \
+  --user "$(id -u):$(id -g)" \
   -e PRESSUREPROCESS_ROOT_DIR=data/phase1 \
   -e TORCH_NUM_THREADS=1 \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/figures:/app/figures" \
+  -v "$(pwd)/data:/app/data:Z" \
+  -v "$(pwd)/figures:/app/figures:Z" \
   pressureprocess
 ```
 
 Notes:
 - `PRESSUREPROCESS_ROOT_DIR` controls where the pipeline looks for inputs and writes outputs.
 - The image installs CPU-only PyTorch and conservative thread defaults to reduce memory pressure on smaller hosts.
+- `--user "$(id -u):$(id -g)"` avoids host/container ownership mismatches.
+- `:Z` on bind mounts applies SELinux relabeling (needed on Fedora/RHEL/CentOS systems).
 
 Usage overview
 --------------
