@@ -17,6 +17,18 @@ or:
 python -m pip install .
 ```
 
+Tests and coverage
+------------------
+Install test tooling:
+```
+python -m pip install -e ".[dev]"
+```
+
+Run coverage:
+```
+pytest --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
+```
+
 Docker
 ------
 Build:

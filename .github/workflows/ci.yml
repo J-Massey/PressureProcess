@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 jobs:
-  python-smoke:
-    name: Python Smoke
+  python-tests:
+    name: Python Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.10.0+cpu
-          python -m pip install .
+          python -m pip install ".[dev]"
 
       - name: Verify dependency resolution
         run: python -m pip check
@@ -43,6 +43,16 @@ jobs:
         run: |
           python -c "from src.config_params import Config; print(Config().ROOT_DIR)"
           python -c "import src.run_pipeline"
+
+      - name: Run tests with coverage
+        run: |
+          pytest -q --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
 
   docker-build:
     name: Docker Build

@@ -16,5 +16,11 @@ setup(
         "scienceplots",
         "torch",
     ],
+    extras_require={
+        "dev": [
+            "pytest>=8.0",
+            "pytest-cov>=5.0",
+        ],
+    },
     # optional: include_package_data=True, and MANIFEST.in to include data files if needed
 )
