@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,7 +8,7 @@ from icecream import ic
 from tqdm import tqdm
 
 from src.config_params import Config
-from src.checks.plot._style import apply_plot_style
+from src.checks.plot._style import apply_plot_style, resolve_figure_dir
 
 cfg = Config()
 
@@ -24,8 +22,7 @@ WINDOW  = cfg.WINDOW
 LABELS = ("0psig", "50psig", "100psig")
 PSIGS  = (0.0, 50.0, 100.0)
 COLOURS = ("#1e8ad8", "#ff7f0e", "#26bd26")  # hex equivalents of C0, C1, C2
-FIG_DIR = Path("figures") / "from_data"
-FIG_DIR.mkdir(parents=True, exist_ok=True)
+FIG_DIR = resolve_figure_dir(cfg.ROOT_DIR)
 
 
 def compute_spec(x: np.ndarray, fs: float = FS, nperseg: int = NPERSEG):

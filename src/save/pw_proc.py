@@ -1,6 +1,8 @@
 # tf_compute.py
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import h5py
 from scipy.signal import butter, sosfiltfilt
@@ -81,6 +83,7 @@ def save_corrected_pressure(
 
     ph_processed = cfg.PH_PROCESSED_FILE
     ph_raw = cfg.PH_RAW_FILE
+    os.makedirs(Path(ph_processed).parent, exist_ok=True)
 
     with h5py.File(ph_processed, 'w') as hf:
         # --- file-level metadata ---
@@ -133,9 +136,17 @@ def save_corrected_pressure(
                 with h5py.File(f"{CAL_BASE}/PH/calibs_{int(psigs[i])}.h5", "r") as hf:
                     f_cal = np.asarray(hf["frequencies"][:], float)
                     H_cal = np.asarray(hf["H_fused"][:], complex)
-                with h5py.File(f"{CAL_BASE}/NC/calibs_{int(psigs[i])}.h5", "r") as hf:
-                    f_cal_nkd = hf["frequencies"][:].squeeze().astype(float)
-                    H_fused_nkd = hf["H_fused"][:].squeeze().astype(complex)
+
+                nc_cal_path = Path(CAL_BASE) / "NC" / f"calibs_{int(psigs[i])}.h5"
+                if nc_cal_path.exists():
+                    with h5py.File(nc_cal_path, "r") as hf:
+                        f_cal_nkd = hf["frequencies"][:].squeeze().astype(float)
+                        H_fused_nkd = hf["H_fused"][:].squeeze().astype(complex)
+                else:
+                    # iso_re workflow: run without NC semi-anechoic files.
+                    print(f"[warn] missing NC calibration: {nc_cal_path}; using identity FRF")
+                    f_cal_nkd = np.array([0.0, FS / 2.0], dtype=float)
+                    H_fused_nkd = np.array([1.0 + 0.0j, 1.0 + 0.0j], dtype=complex)
 
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")

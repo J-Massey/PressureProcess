@@ -9,22 +9,45 @@ import os
 from dataclasses import dataclass, field
 
 
+def _profile_name() -> str:
+    return os.getenv("PRESSUREPROCESS_PROFILE", "").strip().lower()
+
+
+def _use_iso_profile() -> bool:
+    return _profile_name() in {"iso_re", "iso", "sarah_iso_re"}
+
+
 @dataclass(frozen=True)
 class Config:
     # --- Experiment/run metadata defaults ---
     ROOT_DIR: str = field(
-        default_factory=lambda: os.getenv("PRESSUREPROCESS_ROOT_DIR", "data/phase1")
+        default_factory=lambda: os.getenv(
+            "PRESSUREPROCESS_ROOT_DIR",
+            "data/iso_re" if _use_iso_profile() else "data/phase1",
+        )
     )
-    LABELS: tuple[str, str, str] = ("0psig", "50psig", "100psig")
-    PSIGS: tuple[float, float, float] = (0.0, 50.0, 100.0)
+    LABELS: tuple[str, str, str] = field(
+        default_factory=lambda: (
+            ("0psig", "30psig", "50psig")
+            if _use_iso_profile()
+            else ("0psig", "50psig", "100psig")
+        )
+    )
+    PSIGS: tuple[float, float, float] = field(
+        default_factory=lambda: (
+            (0.0, 30.0, 50.0) if _use_iso_profile() else (0.0, 50.0, 100.0)
+        )
+    )
     U_TAU: tuple[float, float, float] = (0.537, 0.522, 0.506)
     U_E: tuple[float, float, float] = (14., 14., 14.)
     ANALOG_LP_FILTER: tuple[int, int, int] = (2100, 4700, 14100)
     F_CUTS: tuple[float, float, float] = (1200.0, 4000.0, 10000.0)  # per-label anti-alias lowpass in Hz
     U_TAU_REL_UNC: tuple[float, float, float] = (0.2, 0.1, 0.05)
-    SPACINGS: tuple[str, ...] = ("close", "far")
-    RUN_NC_CALIBS: bool = True
-    INCLUDE_NC_CALIB_RAW: bool = True
+    SPACINGS: tuple[str, ...] = field(
+        default_factory=lambda: ("close",) if _use_iso_profile() else ("close", "far")
+    )
+    RUN_NC_CALIBS: bool = field(default_factory=lambda: not _use_iso_profile())
+    INCLUDE_NC_CALIB_RAW: bool = field(default_factory=lambda: not _use_iso_profile())
 
     # --- Sampling / spectral defaults ---
     FS: float = 50_000.0

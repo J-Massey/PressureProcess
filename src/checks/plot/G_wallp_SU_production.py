@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,7 +7,7 @@ from matplotlib.lines import Line2D
 from icecream import ic
 
 from src.config_params import Config
-from src.checks.plot._style import apply_plot_style
+from src.checks.plot._style import apply_plot_style, resolve_figure_dir
 
 cfg = Config()
 
@@ -23,8 +21,7 @@ WINDOW  = cfg.WINDOW
 LABELS = ("0psig", "50psig", "100psig")
 PSIGS  = (0.0, 50.0, 100.0)
 COLOURS = ("#1e8ad8", "#ff7f0e", "#26bd26")  # hex equivalents of C0, C1, C2
-FIG_DIR = Path("figures") / "from_data"
-FIG_DIR.mkdir(parents=True, exist_ok=True)
+FIG_DIR = resolve_figure_dir(cfg.ROOT_DIR)
 
 
 def compute_spec(x: np.ndarray, fs: float = FS, nperseg: int = NPERSEG):
@@ -82,16 +79,24 @@ def channel_model(Tplus, Re_tau: float, u_tau: float, u_cl) -> np.ndarray:
     return g1, g2, rv
 
 def plot_model_comparison_roi():
-    labels = ['0psig', '50psig', '100psig']
-    Re_nom = [1_500, 5_000, 9_000]
-
     f_cutl, f_cuth = 100.0, 1_000.0  # Hz
-
-    fig, axs = plt.subplots(1, 3, figsize=(8, 3), tight_layout=True,
-                            sharex=True, sharey=True)
 
     with h5py.File(cfg.PH_PROCESSED_FILE, "r") as hf:
         g_fs = hf["wallp_production"]
+        labels = list(g_fs.keys())
+        if not labels:
+            raise KeyError("No labels found in wallp_production")
+
+        fig, axs = plt.subplots(
+            1,
+            len(labels),
+            figsize=(max(3 * len(labels), 3), 3),
+            tight_layout=True,
+            sharex=True,
+            sharey=True,
+        )
+        axs = np.atleast_1d(axs)
+
         # fall back to global FS if attribute is missing
         fs = float(hf.attrs.get("fs_Hz", FS))
         for i, L in enumerate(labels):
@@ -109,42 +114,59 @@ def plot_model_comparison_roi():
                 np.atleast_1d(gL.attrs.get("u_tau_rel_unc", 0.0))[0]
             )
 
-            g_corr = gL["frf_corrected_signals"]
             g_corr = gL["fs_noise_rejected_signals"]
-            g_far   = g_corr["far"]
-            g_close = g_corr["close"]
+            available_spacings = [sp for sp in ("far", "close") if sp in g_corr]
+            if not available_spacings:
+                print(f"[skip] no corrected spacing groups for {L}")
+                continue
+
+            sp_model = "far" if "far" in available_spacings else available_spacings[0]
+            sp_roi = "close" if "close" in available_spacings else available_spacings[0]
 
             # use PH2 for spectra / models as before
-            ph2_far   = g_far["PH2_Pa"][:]
-            ph2_close = g_close["PH2_Pa"][:]
+            ph2_model = g_corr[sp_model]["PH2_Pa"][:]
+            ph2_roi = g_corr[sp_roi]["PH2_Pa"][:]
 
             # spectra
-            f_far,   Pyy_far   = compute_spec(ph2_far,   fs=fs, nperseg=NPERSEG)
-            f_close, Pyy_close = compute_spec(ph2_close, fs=fs, nperseg=NPERSEG)
+            f_model, pyy_model = compute_spec(ph2_model, fs=fs, nperseg=NPERSEG)
+            f_roi, pyy_roi = compute_spec(ph2_roi, fs=fs, nperseg=NPERSEG)
 
-            # T^+ based on far spectrum for the model curves
-            T_plus_far = (u_tau**2) / (nu * f_far)
+            # T^+ based on model spacing spectrum for the model curves
+            t_plus_model = (u_tau**2) / (nu * f_model)
 
             # friction coefficient "cf_2" from u_tau and Ue (cf/2 = (u_tau/Ue)^2)
             cf_2 = (u_tau / Ue)**2
 
             # models
-            g1_b, g2_b, rv_b = bl_model(T_plus_far, Re_tau, cf_2)
-            g1_c, g2_c, rv_c = channel_model(T_plus_far, Re_tau,
+            g1_b, g2_b, rv_b = bl_model(t_plus_model, Re_tau, cf_2)
+            g1_c, g2_c, rv_c = channel_model(t_plus_model, Re_tau,
                                              u_tau, u_cl=Ue)
 
             bl_fphipp_plus      = rv_b * (g1_b + g2_b)
             channel_fphipp_plus = rv_c * (g1_c + g2_c)
 
-            ax.semilogx(T_plus_far, bl_fphipp_plus,
-                        linestyle="--", color=COLOURS[i], lw=0.7)
-            ax.semilogx(T_plus_far, channel_fphipp_plus,
-                        linestyle="-.", color=COLOURS[i], lw=0.7)
+            ax.semilogx(
+                t_plus_model,
+                bl_fphipp_plus,
+                linestyle="--",
+                color=COLOURS[i % len(COLOURS)],
+                lw=0.7,
+            )
+            ax.semilogx(
+                t_plus_model,
+                channel_fphipp_plus,
+                linestyle="-.",
+                color=COLOURS[i % len(COLOURS)],
+                lw=0.7,
+            )
 
-            # ROI & u_tau-uncertainty fan based on PH2 close
-            mask = (f_close > f_cutl) & (f_close < f_cuth)
-            f_m = f_close[mask]
-            P_m = Pyy_close[mask]
+            # ROI & u_tau-uncertainty fan based on PH2 ROI spacing
+            mask = (f_roi > f_cutl) & (f_roi < f_cuth)
+            if not np.any(mask):
+                print(f"[skip] no frequencies in ROI for {L}")
+                continue
+            f_m = f_roi[mask]
+            P_m = pyy_roi[mask]
 
             u_nom = u_tau
             u_lo  = u_nom * (1.0 - u_tau_rel_unc)
@@ -176,16 +198,15 @@ def plot_model_comparison_roi():
             T_nom = (u_nom**2) / (nu * f_m)
             Y_nom = (f_m * P_m) / (rho**2 * u_nom**4)
             ax.semilogx(T_nom, Y_nom,
-                        color=COLOURS[i], linewidth=1.0,
-                        label=labels[i], zorder=10)
+                        color=COLOURS[i % len(COLOURS)], linewidth=1.0,
+                        label=L, zorder=10)
 
             ax.grid(True, which='major', linestyle='--',
                     linewidth=0.4, alpha=0.7)
             # ax.grid(True, which='minor', linestyle=':',
             #         linewidth=0.2, alpha=0.6)
             
-            re_labs = fr'$Re_\tau^{{nom}}={Re_nom[i]:,.0f}$; {labels[i]}'
-            ax.set_title(f"{re_labs}")
+            ax.set_title(L)
 
             ax.set_xlabel(r"$T^+$")
     # common axes / limits
@@ -194,20 +215,6 @@ def plot_model_comparison_roi():
     for ax in axs:
         ax.set_xlim(7, 7_000)
         ax.set_ylim(0, 6)
-
-    # legend for Re_tau (or PH2 conditions)
-    labels_handles = ['1,000 PH2', '5,000 PH2', '9,000 PH2']
-    label_colours  = COLOURS
-    label_styles   = ['-', '-', '-']
-    custom_lines = [
-        Line2D([0], [0],
-               color=label_colours[i],
-               linestyle=label_styles[i])
-        for i in range(len(labels_handles))
-    ]
-    # leg1 = axs[-1].legend(custom_lines, labels_handles,
-    #                       loc='upper right', fontsize=8)
-    # axs[-1].add_artist(leg1)
 
     # legend for model types
     labels_handles2 = ['BL model', 'Channel model']
@@ -219,8 +226,9 @@ def plot_model_comparison_roi():
                linestyle=label_styles2[i])
         for i in range(len(labels_handles2))
     ]
-    axs[1].legend(custom_lines2, labels_handles2,
-                  loc='upper center', fontsize=8)
+    legend_ax = axs[min(1, len(axs) - 1)]
+    legend_ax.legend(custom_lines2, labels_handles2,
+                     loc='upper center', fontsize=8)
 
 
     plt.savefig(FIG_DIR / "G_wallp_SU_production.png", dpi=600)

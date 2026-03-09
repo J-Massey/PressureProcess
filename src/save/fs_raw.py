@@ -1,6 +1,8 @@
 # tf_compute.py
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import h5py
 import scipy.io as sio
@@ -82,6 +84,7 @@ def save_raw_fs_pressure(
     include_nc_calib = cfg.INCLUDE_NC_CALIB_RAW if include_nc_calib is None else include_nc_calib
 
     fs_raw = cfg.NKD_RAW_FILE
+    os.makedirs(Path(fs_raw).parent, exist_ok=True)
 
     with h5py.File(fs_raw, 'w') as hf:
         # --- file-level metadata ---

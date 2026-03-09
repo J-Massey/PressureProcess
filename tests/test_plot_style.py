@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pytest
 
-from src.checks.plot._style import apply_plot_style
+from src.checks.plot._style import apply_plot_style, resolve_figure_dir
 
 
 def test_apply_plot_style_auto_without_latex(monkeypatch) -> None:
@@ -31,3 +33,21 @@ def test_apply_plot_style_rejects_invalid_value(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="PRESSUREPROCESS_USE_TEX"):
         apply_plot_style()
+
+
+def test_resolve_figure_dir_relative(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    fig_dir = resolve_figure_dir("data/phase1")
+
+    assert fig_dir == Path("figures/data/phase1")
+    assert fig_dir.exists()
+
+
+def test_resolve_figure_dir_absolute(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    fig_dir = resolve_figure_dir("/app/data/phase1")
+
+    assert fig_dir == Path("figures/app/data/phase1")
+    assert fig_dir.exists()

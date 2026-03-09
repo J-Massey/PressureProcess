@@ -1,6 +1,8 @@
 # tf_compute.py
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import h5py
 import scipy.io as sio
@@ -81,6 +83,7 @@ def save_prod_fs_pressure(
     spacings = cfg.SPACINGS if spacings is None else spacings
 
     fs_raw = cfg.NKD_PROCESSED_FILE
+    os.makedirs(Path(fs_raw).parent, exist_ok=True)
 
     with h5py.File(fs_raw, 'w') as hf:
         # --- file-level metadata ---
@@ -120,16 +123,25 @@ def save_prod_fs_pressure(
             gL.attrs['Ue_m_per_s'] = float(Ue[i])
 
 
-            with h5py.File(f"{cfg.TF_BASE}/NC/calibs_{int(psigs[i])}.h5", "r") as hf:
-                f_cal_nkd = hf["frequencies"][:].squeeze().astype(float)
-                H_fused_nkd = hf["H_fused"][:].squeeze().astype(complex)
+            nc_cal_path = Path(cfg.TF_BASE) / "NC" / f"calibs_{int(psigs[i])}.h5"
+            if nc_cal_path.exists():
+                with h5py.File(nc_cal_path, "r") as hf:
+                    f_cal_nkd = hf["frequencies"][:].squeeze().astype(float)
+                    H_fused_nkd = hf["H_fused"][:].squeeze().astype(complex)
+                nc_note = "Semi-anechoic calibration mapping"
+            else:
+                # iso_re workflow: run without NC semi-anechoic files.
+                print(f"[warn] missing NC calibration: {nc_cal_path}; using identity FRF")
+                f_cal_nkd = np.array([0.0, FS / 2.0], dtype=float)
+                H_fused_nkd = np.array([1.0 + 0.0j, 1.0 + 0.0j], dtype=complex)
+                nc_note = "Identity FRF fallback (no NC calibration file found)"
 
             gFRF = gL.create_group("FRF_NC_to_nkd")
             gFRF.create_dataset("fcal_Hz", data=f_cal_nkd)
             gFRF.create_dataset("Hcal", data=H_fused_nkd)
             gFRF.attrs["from"] = "NC"
             gFRF.attrs["to"] = "nkd"
-            gFRF.attrs["note"] = "Semi-anechoic calibration mapping"
+            gFRF.attrs["note"] = nc_note
 
             seen_any = False
             for sp in spacings:

@@ -15,6 +15,15 @@ from src.config_params import Config
 
 cfg = Config()  # load the config parameters (file paths, constants, etc.) from a central location to ensure consistency
 
+
+def _extract_channel_data(mat_obj: dict) -> object:
+    if "channelData_WN" in mat_obj:
+        return mat_obj["channelData_WN"]
+    if "channelData" in mat_obj:
+        return mat_obj["channelData"]
+    raise KeyError("Expected one of calibration keys: channelData_WN, channelData")
+
+
 # ----------------- Main API: save per-pressure physical FRFs ---------- 
 def save_PH_calibs(
     *,
@@ -41,7 +50,7 @@ def save_PH_calibs(
         psig = float(p_si)
         # ---- run 1: PH1 to NC
         m1 = loadmat(base / f"calib_{p_si}psig_1.mat")
-        ph1_v, _, nc_v, *_ = m1["channelData_WN"].T
+        ph1_v, _, nc_v, *_ = _extract_channel_data(m1).T
         ph1_pa = volts_to_pa(ph1_v, "PH1")
         nc1_pa = volts_to_pa(nc_v,  "NC")
         # compensate sensor sensitivity vs psig (amplitude gain)
@@ -57,7 +66,7 @@ def save_PH_calibs(
 
         # ---- run 2: PH2 to NC
         m2 = loadmat(base / f"calib_{p_si}psig_2.mat")
-        _, ph2_v, nc_v2, *_ = m2["channelData_WN"].T
+        _, ph2_v, nc_v2, *_ = _extract_channel_data(m2).T
         ph2_pa = volts_to_pa(ph2_v, "PH2")
         nc2_pa = volts_to_pa(nc_v2,  "NC")
         ph2_pa = correct_pressure_sensitivity(ph2_pa, psig)
