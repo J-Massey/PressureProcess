@@ -15,6 +15,7 @@ from src.checks.plot import (
     SU_two_point,
 )
 from src.checks.plot_bump import raw as bump_raw
+from src.checks.plot_bump import production as bump_production
 
 
 def run_all() -> None:
@@ -29,7 +30,10 @@ def run_all() -> None:
         G_wallp_SU_raw.plot_raw()
 
     F_freestreamp_SU_production.plot_fs_raw()
-    G_wallp_SU_production.plot_model_comparison_roi()
+    if dataset_name.startswith("bump"):
+        bump_production.plot_cleaned_by_case()
+    else:
+        G_wallp_SU_production.plot_model_comparison_roi()
 
     if {"close", "far"}.issubset(set(cfg.SPACINGS)):
         SU_two_point.plot_2pt_inner()

@@ -73,11 +73,14 @@ def plot_fs_raw():
                     continue
                 nc_raw = g_label[f"{sp}/NC_Pa"][:]
                 f, pxx = compute_spec(nc_raw, fs=FS, nperseg=NPERSEG)
-                t_plus = (u_tau**2) / (nu * f)
+                mask = f > 0.0
+                if not np.any(mask):
+                    continue
+                t_plus = (u_tau**2) / (nu * f[mask])
                 norm_factor = (rho**2) * (u_tau**4)
                 axes[j].loglog(
                     t_plus,
-                    f * pxx / norm_factor,
+                    f[mask] * pxx[mask] / norm_factor,
                     label=label,
                     color=COLOURS[i % len(COLOURS)],
                 )
@@ -126,18 +129,21 @@ def plot_raw():
                     continue
                 ph2_raw = g_label[f"{sp}/PH2_Pa"][:]
                 f, pxx = compute_spec(ph2_raw, fs=FS, nperseg=NPERSEG)
-                t_plus = (u_tau**2) / (nu * f)
+                mask = f > 0.0
+                if not np.any(mask):
+                    continue
+                t_plus = (u_tau**2) / (nu * f[mask])
                 norm_factor = (rho**2) * (u_tau**4)
                 axes[j].semilogx(
                     t_plus,
-                    f * pxx / norm_factor,
+                    f[mask] * pxx[mask] / norm_factor,
                     label=label,
                     color=COLOURS[i % len(COLOURS)],
                 )
 
     for ax in axes:
         ax.legend()
-    plt.savefig(FIG_DIR / "wallp_bump_rw.png", dpi=600)
+    plt.savefig(FIG_DIR / "wallp_bump_raw.png", dpi=600)
 
 
 if __name__ == "__main__":
