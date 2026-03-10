@@ -23,7 +23,7 @@ class Config:
     ROOT_DIR: str = field(
         default_factory=lambda: os.getenv(
             "PRESSUREPROCESS_ROOT_DIR",
-            "data/iso_re" if _use_iso_profile() else "data/phase1",
+            "data/bump1",
         )
     )
     LABELS: tuple[str, str, str] = field(

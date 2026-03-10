@@ -55,8 +55,8 @@ def bl_model(Tplus, Re_tau: float, cf_2: float) -> np.ndarray:
     mean_To = 0.82
     r1 = 0.5
     r2 = 7
-    rv = np.exp(r1 * Tplus)/(np.exp(r1*r2) + np.exp(r1 * Tplus)) # correct
-    rv = np.nan_to_num(rv, nan=1)  # replace NaNs with 0
+    z = np.clip(r1 * (Tplus - r2), -60.0, 60.0)
+    rv = 1.0 / (1.0 + np.exp(-z))
     mean_To_plus = mean_To * Re_tau * np.sqrt(cf_2)
     g1 = A1 * np.exp(-sig1 * (np.log10(Tplus) - np.log10(mean_Tplus))**2)
     g2 = A2 * np.exp(-sig2 * (np.log10(Tplus) - np.log10(mean_To_plus))**2)
@@ -71,8 +71,8 @@ def channel_model(Tplus, Re_tau: float, u_tau: float, u_cl) -> np.ndarray:
     mean_To = 0.6
     r1 = 0.5
     r2 = 3
-    rv = np.exp(r1 * Tplus)/(np.exp(r1*r2) + np.exp(r1 * Tplus)) # correct
-    rv = np.nan_to_num(rv, nan=1)  # replace NaNs with 0
+    z = np.clip(r1 * (Tplus - r2), -60.0, 60.0)
+    rv = 1.0 / (1.0 + np.exp(-z))
     mean_To_plus = mean_To * Re_tau * u_tau/u_cl
     g1 = A1 * np.exp(-sig1 * (np.log10(Tplus) - np.log10(mean_Tplus))**2)
     g2 = A2 * np.exp(-sig2 * (np.log10(Tplus) - np.log10(mean_To_plus))**2)
@@ -87,21 +87,17 @@ def plot_model_comparison_roi():
         if not labels:
             raise KeyError("No labels found in wallp_production")
 
-        fig, axs = plt.subplots(
-            1,
-            len(labels),
-            figsize=(max(3 * len(labels), 3), 3),
-            tight_layout=True,
-            sharex=True,
-            sharey=True,
-        )
-        axs = np.atleast_1d(axs)
-
         # fall back to global FS if attribute is missing
         fs = float(hf.attrs.get("fs_Hz", FS))
+        model_labels = ["BL model", "Channel model"]
+        model_lines = [
+            Line2D([0], [0], color="black", linestyle="--"),
+            Line2D([0], [0], color="black", linestyle="-."),
+        ]
+
         for i, L in enumerate(labels):
-            ax = axs[i]
             gL = g_fs[L]
+            fig, ax = plt.subplots(1, 1, figsize=(3.4, 3.1), tight_layout=True)
             Ue = _get_ue(hf, gL, i)
 
             # scalarise attrs in case h5py gives small arrays
@@ -128,8 +124,14 @@ def plot_model_comparison_roi():
             ph2_roi = g_corr[sp_roi]["PH2_Pa"][:]
 
             # spectra
-            f_model, pyy_model = compute_spec(ph2_model, fs=fs, nperseg=NPERSEG)
+            f_model, _ = compute_spec(ph2_model, fs=fs, nperseg=NPERSEG)
             f_roi, pyy_roi = compute_spec(ph2_roi, fs=fs, nperseg=NPERSEG)
+            model_mask = f_model > 0.0
+            if not np.any(model_mask):
+                print(f"[skip] non-positive model frequencies for {L}")
+                plt.close(fig)
+                continue
+            f_model = f_model[model_mask]
 
             # T^+ based on model spacing spectrum for the model curves
             t_plus_model = (u_tau**2) / (nu * f_model)
@@ -164,6 +166,7 @@ def plot_model_comparison_roi():
             mask = (f_roi > f_cutl) & (f_roi < f_cuth)
             if not np.any(mask):
                 print(f"[skip] no frequencies in ROI for {L}")
+                plt.close(fig)
                 continue
             f_m = f_roi[mask]
             P_m = pyy_roi[mask]
@@ -205,33 +208,23 @@ def plot_model_comparison_roi():
                     linewidth=0.4, alpha=0.7)
             # ax.grid(True, which='minor', linestyle=':',
             #         linewidth=0.2, alpha=0.6)
-            
+
             ax.set_title(L)
-
             ax.set_xlabel(r"$T^+$")
-    # common axes / limits
-    axs[0].set_ylabel(r"$({f \phi_{pp}}^+)_{\mathrm{corr.}}$")
+            ax.set_ylabel(r"$({f \phi_{pp}}^+)_{\mathrm{corr.}}$")
+            ax.set_xlim(7, 7_000)
+            ax.set_ylim(0, 6)
 
-    for ax in axs:
-        ax.set_xlim(7, 7_000)
-        ax.set_ylim(0, 6)
+            legend_lines = model_lines + [
+                Line2D([0], [0], color=COLOURS[i % len(COLOURS)], linestyle="-")
+            ]
+            legend_labels = model_labels + [f"Data ({sp_roi})"]
+            ax.legend(legend_lines, legend_labels, loc="upper center", fontsize=8)
 
-    # legend for model types
-    labels_handles2 = ['BL model', 'Channel model']
-    label_colours2  = ['black', 'black']
-    label_styles2   = ['--', '-.']
-    custom_lines2 = [
-        Line2D([0], [0],
-               color=label_colours2[i],
-               linestyle=label_styles2[i])
-        for i in range(len(labels_handles2))
-    ]
-    legend_ax = axs[min(1, len(axs) - 1)]
-    legend_ax.legend(custom_lines2, labels_handles2,
-                     loc='upper center', fontsize=8)
-
-
-    plt.savefig(FIG_DIR / "G_wallp_SU_production.png", dpi=600)
+            out = FIG_DIR / f"G_wallp_SU_production_{L}.png"
+            plt.savefig(out, dpi=600)
+            plt.close(fig)
+            print(f"[ok] wrote {out}")
 
 if __name__ == "__main__":
     plot_model_comparison_roi()
