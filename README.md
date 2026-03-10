@@ -145,38 +145,3 @@ Edit `src/config_params.py` to set:
 Path fields (`RAW_CAL_BASE`, `RAW_BASE`, `TF_BASE`, `PH_RAW_FILE`,
 `PH_PROCESSED_FILE`, `NKD_RAW_FILE`, `NKD_PROCESSED_FILE`) are derived from
 `ROOT_DIR`.
-
-Sarah iso option
-----------------
-If you are using the sarah iso layout where only one spacing is measured and
-the NC calibration is not rerun, set:
- - SPACINGS to ("close",) or ("far",)
- - RUN_NC_CALIBS to False
- - INCLUDE_NC_CALIB_RAW to False
-
-Run the pipeline
-----------------
-```
-python -m src.run_pipeline
-```
-
-What run_pipeline does
-----------------------
-`src/run_pipeline.py` calls two runner scripts in order.
-
-1) Processing runner: `src/save/run_all.py`
-   - `calibs.save_PH_calibs()` and `calibs.save_NC_calibs()`
-   - `fs_raw.save_raw_fs_pressure()`
-   - `pw_raw.save_raw_ph_pressure()`
-   - `fs_proc.save_prod_fs_pressure()`
-   - `pw_proc.save_corrected_pressure()`
-
-2) Plot runner: `src/checks/plot/run_all.py`
-   - `F_freestreamp_SU_raw.plot_fs_raw()`
-   - `F_freestreamp_SU_production.plot_fs_raw()`
-   - `G_wallp_SU_raw.plot_raw()`
-   - `G_wallp_SU_production.plot_model_comparison_roi()`
-   - `SU_two_point.plot_2pt_inner()`
-   - `SU_two_point.plot_2pt_outer()`
-   - `SU_two_point.plot_2pt_speed_outer()`
-   - `SU_two_point.plot_2pt_speed_inner()`

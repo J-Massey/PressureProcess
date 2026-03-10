@@ -5,11 +5,14 @@ from typing import Sequence
 from icecream import ic
 
 import h5py
+import numpy as np
+import matplotlib.pyplot as plt
 from scipy.io import loadmat
 
 from src.core.phys_helpers import volts_to_pa  # expects volts to Pa conversion by channel
 from src.core.pressure_sensitivity import correct_pressure_sensitivity
 from src.core.tf_definition import estimate_frf, combine_anechoic_calibrations
+from src.checks.plot._style import apply_plot_style, resolve_figure_dir
 
 from src.config_params import Config
 
@@ -22,6 +25,61 @@ def _extract_channel_data(mat_obj: dict) -> object:
     if "channelData" in mat_obj:
         return mat_obj["channelData"]
     raise KeyError("Expected one of calibration keys: channelData_WN, channelData")
+
+
+def _save_ph_tf_plot(
+    *,
+    p_si: int,
+    f1: np.ndarray,
+    H1: np.ndarray,
+    f2: np.ndarray,
+    H2: np.ndarray,
+    f_fused: np.ndarray,
+    H_fused: np.ndarray,
+    g2_fused: np.ndarray,
+) -> None:
+    apply_plot_style()
+    fig_dir = resolve_figure_dir(cfg.ROOT_DIR) / "calibration"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, (ax_mag, ax_coh) = plt.subplots(2, 1, figsize=(6.0, 4.8), tight_layout=True)
+
+    for f_i, h_i, label, color in (
+        (f1, H1, "PH1->NC", "#1e8ad8"),
+        (f2, H2, "PH2->NC", "#ff7f0e"),
+        (f_fused, H_fused, "Fused", "#111111"),
+    ):
+        mask = np.asarray(f_i) > 0.0
+        if not np.any(mask):
+            continue
+        mag_db = 20.0 * np.log10(np.maximum(np.abs(np.asarray(h_i)[mask]), 1e-12))
+        ax_mag.semilogx(np.asarray(f_i)[mask], mag_db, color=color, linewidth=1.0, label=label)
+
+    mask_fused = np.asarray(f_fused) > 0.0
+    if np.any(mask_fused):
+        ax_coh.semilogx(
+            np.asarray(f_fused)[mask_fused],
+            np.asarray(g2_fused)[mask_fused],
+            color="#26bd26",
+            linewidth=1.0,
+            label="Fused coherence",
+        )
+
+    ax_mag.set_title(f"PH Calibration TF Check ({p_si} psig)")
+    ax_mag.set_ylabel(r"$|H(f)|$ [dB]")
+    ax_mag.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
+    ax_mag.legend(fontsize=8)
+
+    ax_coh.set_xlabel("Frequency [Hz]")
+    ax_coh.set_ylabel(r"$\gamma^2$")
+    ax_coh.set_ylim(0.0, 1.05)
+    ax_coh.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
+    ax_coh.legend(fontsize=8)
+
+    out = fig_dir / f"PH_tf_{p_si}psig.png"
+    plt.savefig(out, dpi=300)
+    plt.close(fig)
+    print(f"[ok] TF check plot {out}")
 
 
 # ----------------- Main API: save per-pressure physical FRFs ---------- 
@@ -97,6 +155,20 @@ def save_PH_calibs(
             hf.attrs["orientation"] = "H = NC/PH (H1 = conj(Sxy)/Sxx with x=PH, y=NC)"
             hf.attrs["fs_Hz"] = cfg.FS
             hf.attrs["fcut_Hz"] = fcut
+
+        try:
+            _save_ph_tf_plot(
+                p_si=p_si,
+                f1=f1,
+                H1=H1,
+                f2=f2,
+                H2=H2,
+                f_fused=f_fused,
+                H_fused=H_fused,
+                g2_fused=g2_fused,
+            )
+        except Exception as exc:
+            print(f"[warn] failed TF check plot for {p_si} psig: {exc}")
 
         print(f"[ok] {p_si:>3} psig to {out}")
 

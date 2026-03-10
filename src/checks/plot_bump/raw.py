@@ -137,7 +137,7 @@ def plot_raw():
 
     for ax in axes:
         ax.legend()
-    plt.savefig(FIG_DIR / "wallp_bump_raw.png", dpi=600)
+    plt.savefig(FIG_DIR / "wallp_bump_rw.png", dpi=600)
 
 
 if __name__ == "__main__":

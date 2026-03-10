@@ -78,8 +78,16 @@ def channel_model(Tplus, Re_tau: float, u_tau: float, u_cl) -> np.ndarray:
     g2 = A2 * np.exp(-sig2 * (np.log10(Tplus) - np.log10(mean_To_plus))**2)
     return g1, g2, rv
 
+def _fade_alpha(u: float, *, mid: float, span: float) -> float:
+    if span <= 0.0:
+        return 0.9
+    w = 1.0 - np.abs(u - mid) / (0.5 * span)  # 1 at centre, 0 at edges
+    return 0.15 + 0.75 * np.clip(w, 0.0, 1.0)
+
+
 def plot_model_comparison_roi():
     f_cutl, f_cuth = 100.0, 1_000.0  # Hz
+    channel_keys = ("PH1_Pa", "PH2_Pa")
 
     with h5py.File(cfg.PH_PROCESSED_FILE, "r") as hf:
         g_fs = hf["wallp_production"]
@@ -97,14 +105,13 @@ def plot_model_comparison_roi():
 
         for i, L in enumerate(labels):
             gL = g_fs[L]
-            fig, ax = plt.subplots(1, 1, figsize=(3.4, 3.1), tight_layout=True)
             Ue = _get_ue(hf, gL, i)
 
             # scalarise attrs in case h5py gives small arrays
             u_tau = float(np.atleast_1d(gL.attrs["u_tau"])[0])
-            nu    = float(np.atleast_1d(gL.attrs["nu"])[0])
-            ic(u_tau**2/(nu * 700), u_tau, nu)
-            rho   = float(np.atleast_1d(gL.attrs["rho"])[0])
+            nu = float(np.atleast_1d(gL.attrs["nu"])[0])
+            ic(u_tau**2 / (nu * 700), u_tau, nu)
+            rho = float(np.atleast_1d(gL.attrs["rho"])[0])
             Re_tau = float(np.atleast_1d(gL.attrs["Re_tau"])[0])
             u_tau_rel_unc = float(
                 np.atleast_1d(gL.attrs.get("u_tau_rel_unc", 0.0))[0]
@@ -119,112 +126,117 @@ def plot_model_comparison_roi():
             sp_model = "far" if "far" in available_spacings else available_spacings[0]
             sp_roi = "close" if "close" in available_spacings else available_spacings[0]
 
-            # use PH2 for spectra / models as before
-            ph2_model = g_corr[sp_model]["PH2_Pa"][:]
-            ph2_roi = g_corr[sp_roi]["PH2_Pa"][:]
+            for channel_key in channel_keys:
+                if channel_key not in g_corr[sp_model] or channel_key not in g_corr[sp_roi]:
+                    print(f"[skip] {L}: missing {channel_key} in {sp_model}/{sp_roi}")
+                    continue
 
-            # spectra
-            f_model, _ = compute_spec(ph2_model, fs=fs, nperseg=NPERSEG)
-            f_roi, pyy_roi = compute_spec(ph2_roi, fs=fs, nperseg=NPERSEG)
-            model_mask = f_model > 0.0
-            if not np.any(model_mask):
-                print(f"[skip] non-positive model frequencies for {L}")
+                channel_tag = channel_key.split("_")[0]
+                fig, ax = plt.subplots(1, 1, figsize=(3.4, 3.1), tight_layout=True)
+
+                sig_model = g_corr[sp_model][channel_key][:]
+                sig_roi = g_corr[sp_roi][channel_key][:]
+
+                # spectra
+                f_model, _ = compute_spec(sig_model, fs=fs, nperseg=NPERSEG)
+                f_roi, pyy_roi = compute_spec(sig_roi, fs=fs, nperseg=NPERSEG)
+                model_mask = f_model > 0.0
+                if not np.any(model_mask):
+                    print(f"[skip] non-positive model frequencies for {L} {channel_tag}")
+                    plt.close(fig)
+                    continue
+                f_model = f_model[model_mask]
+
+                # T^+ based on model spacing spectrum for the model curves
+                t_plus_model = (u_tau**2) / (nu * f_model)
+
+                # friction coefficient "cf_2" from u_tau and Ue (cf/2 = (u_tau/Ue)^2)
+                cf_2 = (u_tau / Ue) ** 2
+
+                # models
+                g1_b, g2_b, rv_b = bl_model(t_plus_model, Re_tau, cf_2)
+                g1_c, g2_c, rv_c = channel_model(t_plus_model, Re_tau, u_tau, u_cl=Ue)
+
+                bl_fphipp_plus = rv_b * (g1_b + g2_b)
+                channel_fphipp_plus = rv_c * (g1_c + g2_c)
+
+                ax.semilogx(
+                    t_plus_model,
+                    bl_fphipp_plus,
+                    linestyle="--",
+                    color=COLOURS[i % len(COLOURS)],
+                    lw=0.7,
+                )
+                ax.semilogx(
+                    t_plus_model,
+                    channel_fphipp_plus,
+                    linestyle="-.",
+                    color=COLOURS[i % len(COLOURS)],
+                    lw=0.7,
+                )
+
+                # ROI & u_tau-uncertainty fan
+                mask = (f_roi > f_cutl) & (f_roi < f_cuth)
+                if not np.any(mask):
+                    print(f"[skip] no frequencies in ROI for {L} {channel_tag}")
+                    plt.close(fig)
+                    continue
+                f_m = f_roi[mask]
+                P_m = pyy_roi[mask]
+
+                u_nom = u_tau
+                u_lo = u_nom * (1.0 - u_tau_rel_unc)
+                u_hi = u_nom * (1.0 + u_tau_rel_unc)
+                u_grid = np.linspace(u_lo, u_hi, 16)
+                mid = 0.5 * (u_lo + u_hi)
+                span = (u_hi - u_lo)
+
+                # draw edges first, centre (nominal) last
+                order = np.argsort(np.abs(u_grid - u_nom))[::-1]
+                for j in order:
+                    u = u_grid[j]
+                    T = (u**2) / (nu * f_m)
+                    Y = (f_m * P_m) / (rho**2 * u**4)
+                    ax.semilogx(
+                        T,
+                        Y,
+                        color=to_rgba("gray", _fade_alpha(float(u), mid=mid, span=span)),
+                        linewidth=1.0,
+                    )
+
+                # nominal curve on top
+                T_nom = (u_nom**2) / (nu * f_m)
+                Y_nom = (f_m * P_m) / (rho**2 * u_nom**4)
+                ax.semilogx(
+                    T_nom,
+                    Y_nom,
+                    color=COLOURS[i % len(COLOURS)],
+                    linewidth=1.0,
+                    label=L,
+                    zorder=10,
+                )
+
+                ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
+                ax.set_title(f"{L} ({channel_tag})")
+                ax.set_xlabel(r"$T^+$")
+                ax.set_ylabel(r"$({f \phi_{pp}}^+)_{\mathrm{corr.}}$")
+                ax.set_xlim(7, 7_000)
+                ax.set_ylim(0, 6)
+
+                legend_lines = model_lines + [
+                    Line2D([0], [0], color=COLOURS[i % len(COLOURS)], linestyle="-")
+                ]
+                legend_labels = model_labels + [f"Data ({sp_roi}, {channel_tag})"]
+                ax.legend(legend_lines, legend_labels, loc="upper center", fontsize=8)
+
+                out_paths = [FIG_DIR / f"G_wallp_SU_production_{L}_{channel_tag}.png"]
+                if channel_tag == "PH2":
+                    # Keep the historical filename for compatibility.
+                    out_paths.append(FIG_DIR / f"G_wallp_SU_production_{L}.png")
+                for out in out_paths:
+                    plt.savefig(out, dpi=600)
+                    print(f"[ok] wrote {out}")
                 plt.close(fig)
-                continue
-            f_model = f_model[model_mask]
-
-            # T^+ based on model spacing spectrum for the model curves
-            t_plus_model = (u_tau**2) / (nu * f_model)
-
-            # friction coefficient "cf_2" from u_tau and Ue (cf/2 = (u_tau/Ue)^2)
-            cf_2 = (u_tau / Ue)**2
-
-            # models
-            g1_b, g2_b, rv_b = bl_model(t_plus_model, Re_tau, cf_2)
-            g1_c, g2_c, rv_c = channel_model(t_plus_model, Re_tau,
-                                             u_tau, u_cl=Ue)
-
-            bl_fphipp_plus      = rv_b * (g1_b + g2_b)
-            channel_fphipp_plus = rv_c * (g1_c + g2_c)
-
-            ax.semilogx(
-                t_plus_model,
-                bl_fphipp_plus,
-                linestyle="--",
-                color=COLOURS[i % len(COLOURS)],
-                lw=0.7,
-            )
-            ax.semilogx(
-                t_plus_model,
-                channel_fphipp_plus,
-                linestyle="-.",
-                color=COLOURS[i % len(COLOURS)],
-                lw=0.7,
-            )
-
-            # ROI & u_tau-uncertainty fan based on PH2 ROI spacing
-            mask = (f_roi > f_cutl) & (f_roi < f_cuth)
-            if not np.any(mask):
-                print(f"[skip] no frequencies in ROI for {L}")
-                plt.close(fig)
-                continue
-            f_m = f_roi[mask]
-            P_m = pyy_roi[mask]
-
-            u_nom = u_tau
-            u_lo  = u_nom * (1.0 - u_tau_rel_unc)
-            u_hi  = u_nom * (1.0 + u_tau_rel_unc)
-
-            n = 16
-            u_grid = np.linspace(u_lo, u_hi, n)
-
-            mid  = 0.5 * (u_lo + u_hi)
-            span = (u_hi - u_lo)
-
-            def fade(u):
-                w = 1.0 - np.abs(u - mid) / (0.5 * span)  # 1 at centre, 0 at edges
-                return 0.15 + 0.75 * np.clip(w, 0.0, 1.0)
-
-            base = "gray"
-            # draw edges first, centre (nominal) last
-            order = np.argsort(np.abs(u_grid - u_nom))[::-1]
-
-            for j in order:
-                u = u_grid[j]
-                T = (u**2) / (nu * f_m)
-                Y = (f_m * P_m) / (rho**2 * u**4)
-                ax.semilogx(T, Y,
-                            color=to_rgba(base, fade(u)),
-                            linewidth=1.0)
-
-            # nominal curve on top
-            T_nom = (u_nom**2) / (nu * f_m)
-            Y_nom = (f_m * P_m) / (rho**2 * u_nom**4)
-            ax.semilogx(T_nom, Y_nom,
-                        color=COLOURS[i % len(COLOURS)], linewidth=1.0,
-                        label=L, zorder=10)
-
-            ax.grid(True, which='major', linestyle='--',
-                    linewidth=0.4, alpha=0.7)
-            # ax.grid(True, which='minor', linestyle=':',
-            #         linewidth=0.2, alpha=0.6)
-
-            ax.set_title(L)
-            ax.set_xlabel(r"$T^+$")
-            ax.set_ylabel(r"$({f \phi_{pp}}^+)_{\mathrm{corr.}}$")
-            ax.set_xlim(7, 7_000)
-            ax.set_ylim(0, 6)
-
-            legend_lines = model_lines + [
-                Line2D([0], [0], color=COLOURS[i % len(COLOURS)], linestyle="-")
-            ]
-            legend_labels = model_labels + [f"Data ({sp_roi})"]
-            ax.legend(legend_lines, legend_labels, loc="upper center", fontsize=8)
-
-            out = FIG_DIR / f"G_wallp_SU_production_{L}.png"
-            plt.savefig(out, dpi=600)
-            plt.close(fig)
-            print(f"[ok] wrote {out}")
 
 if __name__ == "__main__":
     plot_model_comparison_roi()
