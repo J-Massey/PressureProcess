@@ -278,6 +278,7 @@ def wiener_cancel_hybrid(
     gmin=0.1,        # coherence threshold
     alpha=0.99,       # leaky subtraction (0<alpha<=1)
     eps=1e-6,
+    dtype=np.float64,
 ):
     """
     Hybrid Wiener canceller:
@@ -294,11 +295,19 @@ def wiener_cancel_hybrid(
     h       : ndarray
         FIR coefficients (length m).
     """
-    p0 = np.asarray(p0, float)
-    pn = np.asarray(pn, float)
+    work_dtype = np.dtype(dtype)
+    if work_dtype == np.float32:
+        complex_dtype = np.complex64
+    elif work_dtype == np.float64:
+        complex_dtype = np.complex128
+    else:
+        raise ValueError(f"Unsupported dtype for hybrid Wiener cancellation: {work_dtype}")
+
+    p0 = np.asarray(p0, dtype=work_dtype)
+    pn = np.asarray(pn, dtype=work_dtype)
     N = min(p0.size, pn.size)
-    p0 = p0[:N] - p0[:N].mean()
-    pn = pn[:N] - pn[:N].mean()
+    p0 = p0[:N] - p0[:N].mean(dtype=work_dtype)
+    pn = pn[:N] - pn[:N].mean(dtype=work_dtype)
 
     w = get_window(window, nperseg, fftbins=True)
 
@@ -306,6 +315,10 @@ def wiener_cancel_hybrid(
     f, Snn = welch(pn, fs=fs, window=w, nperseg=nperseg, detrend="constant")
     _, S00 = welch(p0, fs=fs, window=w, nperseg=nperseg, detrend="constant")
     _, S0n = csd(p0, pn, fs=fs, window=w, nperseg=nperseg, detrend="constant")
+    f = f.astype(work_dtype, copy=False)
+    Snn = Snn.astype(work_dtype, copy=False)
+    S00 = S00.astype(work_dtype, copy=False)
+    S0n = S0n.astype(complex_dtype, copy=False)
 
     gamma2 = np.abs(S0n)**2 / (S00 * Snn + eps)
     H = S0n / (Snn + eps)          # H1: pn to p0
@@ -315,24 +328,30 @@ def wiener_cancel_hybrid(
 
     # --- build time-domain FIR from H(f) ---
     Nfft = int(2**np.ceil(np.log2(N)))
-    fr = np.fft.rfftfreq(Nfft, d=1.0/fs)
+    fr = np.fft.rfftfreq(Nfft, d=1.0/fs).astype(work_dtype, copy=False)
 
     # interpolate H onto full rfft grid, zero outside band
-    H_i = np.interp(fr, f, H.real, left=0.0, right=0.0) \
-        + 1j * np.interp(fr, f, H.imag, left=0.0, right=0.0)
+    H_i = np.interp(fr, f, H.real, left=0.0, right=0.0).astype(work_dtype, copy=False)
+    H_i = H_i.astype(complex_dtype, copy=False) + complex_dtype(1j) * np.interp(
+        fr,
+        f,
+        H.imag,
+        left=0.0,
+        right=0.0,
+    ).astype(work_dtype, copy=False)
 
-    h_full = np.fft.irfft(H_i, n=Nfft)  # impulse response
+    h_full = np.fft.irfft(H_i, n=Nfft).astype(work_dtype, copy=False)  # impulse response
 
     # simple causal approximation: take first m taps
     if m > Nfft:
         m = Nfft
-    h = h_full[:m].copy()
+    h = np.ascontiguousarray(h_full[:m], dtype=work_dtype)
 
     # --- noise estimate & leaky subtraction ---
-    pb_hat = lfilter(h, [1.0], pn)
+    pb_hat = lfilter(h, [1.0], pn).astype(work_dtype, copy=False)
     p_clean = p0 - alpha * pb_hat
 
-    return p_clean
+    return p_clean.astype(work_dtype, copy=False)
 
 # wiener_cancel_background_torch.py
 import numpy as np
@@ -395,8 +414,9 @@ def wiener_cancel_background(
     # ------------ helpers ------------
     def _as_t(x):
         if isinstance(x, torch.Tensor):
-            return x
-        return torch.tensor(x)
+            return x.to(device=device, dtype=dtype).flatten()
+        arr = np.ascontiguousarray(np.asarray(x))
+        return torch.as_tensor(arr, device=device, dtype=dtype).flatten()
 
     def _next_pow2(n: int) -> int:
         return 1 << (int(n - 1).bit_length())
@@ -465,8 +485,8 @@ def wiener_cancel_background(
     if device is None:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    p0 = _as_t(p0).to(device=device, dtype=dtype).flatten()
-    pn = _as_t(pn).to(device=device, dtype=dtype).flatten()
+    p0 = _as_t(p0)
+    pn = _as_t(pn)
 
     # align lengths
     N = int(min(p0.numel(), pn.numel()))
@@ -489,6 +509,7 @@ def wiener_cancel_background(
     start = N - 1
     rpn   = rpn_full[start : start + m].clone()
     rp0pn = rp0pn_full[start : start + m].clone()
+    del rpn_full, rp0pn_full
 
     denom = (N - torch.arange(m, device=device, dtype=dtype))
     rpn   = rpn / denom
@@ -497,12 +518,14 @@ def wiener_cancel_background(
     # ------------ ridge & Wiener solve ------------
     ridge = ridge_rel * torch.abs(rpn[0])
     c = _cg_toeplitz_solve(rpn, rp0pn, ridge=float(ridge), tol=cg_tol, maxiter=cg_maxiter)
+    del rpn, rp0pn
 
     # ------------ estimate noise p_hat_b = c * pn (causal FIR) ------------
     x = pn_zm.view(1, 1, N)
     w = torch.flip(c, dims=(0,)).view(1, 1, m)   # conv1d is correlation
     x_pad = F.pad(x, (m - 1, 0))
     pb_hat = F.conv1d(x_pad, w).view(-1)         # length N
+    del x, x_pad, w, c
 
     # ------------ cleaned wall pressure p_hat = p0 - alpha * p_hat_b ------------
     p_clean = p0_zm - alpha * pb_hat
@@ -510,9 +533,10 @@ def wiener_cancel_background(
         p_clean = p_clean + mu_p0
 
     p_clean_np = p_clean.detach().cpu().numpy()
-    pb_hat_np  = pb_hat.detach().cpu().numpy()
-
-    return (p_clean_np, pb_hat_np) if return_noise_estimate else p_clean_np
+    if return_noise_estimate:
+        pb_hat_np = pb_hat.detach().cpu().numpy()
+        return p_clean_np, pb_hat_np
+    return p_clean_np
 
 
 if __name__ == "__main__":

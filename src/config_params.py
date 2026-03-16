@@ -42,6 +42,13 @@ class Config:
     )
     RUN_NC_CALIBS: bool = False
     INCLUDE_NC_CALIB_RAW: bool = False
+    PW_NOISE_CANCELLER: str = field(
+        default_factory=lambda: os.getenv(
+            "PRESSUREPROCESS_PW_DENOISER",
+            "auto",
+        ).strip().lower()
+        or "auto"
+    )
 
     # --- Sampling / spectral defaults ---
     FS: float = 50_000.0

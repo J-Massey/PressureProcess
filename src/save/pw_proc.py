@@ -1,17 +1,18 @@
 # tf_compute.py
 from __future__ import annotations
 
+import gc
 import os
+import sys
 
 import numpy as np
 import h5py
 from scipy.signal import butter, sosfiltfilt
 
-from icecream import ic
 from pathlib import Path
 
 from src.core.apply_frf import apply_frf
-from src.core.wiener_filter_torch import wiener_cancel_background, cancel_background_freq, wiener_cancel_hybrid
+from src.core.wiener_filter_torch import wiener_cancel_background, wiener_cancel_hybrid
 from src.config_params import Config
 
 cfg = Config()
@@ -38,6 +39,27 @@ SENSITIVITIES_V_PER_PA = cfg.SENSITIVITIES_V_PER_PA
 PREAMP_GAIN = cfg.PREAMP_GAIN
 CAL_BASE = cfg.TF_BASE
 RAW_BASE = cfg.RAW_BASE
+WORK_DTYPE = np.float32
+
+
+def _resolve_noise_canceller(signal_len: int) -> str:
+    method = cfg.PW_NOISE_CANCELLER
+    if method == "auto":
+        if sys.platform == "darwin" and signal_len >= 1_000_000:
+            return "hybrid"
+        return "wiener"
+    if method in {"hybrid", "wiener"}:
+        return method
+    raise ValueError(
+        "PRESSUREPROCESS_PW_DENOISER must be one of: auto, wiener, hybrid"
+    )
+
+
+def _cancel_noise(signal: np.ndarray, nkd: np.ndarray, fs: float) -> np.ndarray:
+    method = _resolve_noise_canceller(signal.size)
+    if method == "hybrid":
+        return wiener_cancel_hybrid(signal, nkd, fs, m=2**10, dtype=WORK_DTYPE)
+    return wiener_cancel_background(signal, nkd, fs)
 
 
 def volts_to_pa(x_volts: np.ndarray, channel: str) -> np.ndarray:
@@ -78,8 +100,6 @@ def save_corrected_pressure(
     Ue = cfg.U_E
     analog_LP_filter = cfg.ANALOG_LP_FILTER
     spacings = cfg.SPACINGS if spacings is None else spacings
-
-    spacing_meta = None
 
     ph_processed = cfg.PH_PROCESSED_FILE
     ph_raw = cfg.PH_RAW_FILE
@@ -134,19 +154,19 @@ def save_corrected_pressure(
                     raise FileNotFoundError(f"No matching spacings for {L} in raw files")
 
                 with h5py.File(f"{CAL_BASE}/PH/calibs_{int(psigs[i])}.h5", "r") as hf:
-                    f_cal = np.asarray(hf["frequencies"][:], float)
-                    H_cal = np.asarray(hf["H_fused"][:], complex)
+                    f_cal = np.asarray(hf["frequencies"][:], dtype=WORK_DTYPE)
+                    H_cal = np.asarray(hf["H_fused"][:], dtype=np.complex64)
 
                 nc_cal_path = Path(CAL_BASE) / "NC" / f"calibs_{int(psigs[i])}.h5"
                 if nc_cal_path.exists():
                     with h5py.File(nc_cal_path, "r") as hf:
-                        f_cal_nkd = hf["frequencies"][:].squeeze().astype(float)
-                        H_fused_nkd = hf["H_fused"][:].squeeze().astype(complex)
+                        f_cal_nkd = hf["frequencies"][:].squeeze().astype(WORK_DTYPE)
+                        H_fused_nkd = hf["H_fused"][:].squeeze().astype(np.complex64)
                 else:
                     # iso_re workflow: run without NC semi-anechoic files.
                     print(f"[warn] missing NC calibration: {nc_cal_path}; using identity FRF")
-                    f_cal_nkd = np.array([0.0, FS / 2.0], dtype=float)
-                    H_fused_nkd = np.array([1.0 + 0.0j, 1.0 + 0.0j], dtype=complex)
+                    f_cal_nkd = np.array([0.0, FS / 2.0], dtype=WORK_DTYPE)
+                    H_fused_nkd = np.array([1.0 + 0.0j, 1.0 + 0.0j], dtype=np.complex64)
 
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")
@@ -154,16 +174,10 @@ def save_corrected_pressure(
                 def bandpass_filter(data, fs, f_low, f_high, order=3):
                     sos = butter(order, [f_low, f_high], btype="band", fs=fs, output="sos")
                     filtered = sosfiltfilt(sos, data)
-                    return np.nan_to_num(filtered, nan=0.0)
+                    filtered = np.nan_to_num(filtered, nan=0.0, copy=False)
+                    return np.ascontiguousarray(filtered, dtype=WORK_DTYPE)
 
                 for sp in available:
-                    ph1_raw = g_raw[f"{sp}/PH1_Pa"][:]
-                    ph2_raw = g_raw[f"{sp}/PH2_Pa"][:]
-
-                    ph1_filt = apply_frf(ph1_raw, FS, f_cal, H_cal)
-                    ph2_filt = apply_frf(ph2_raw, FS, f_cal, H_cal)
-                    ph1_filt = apply_frf(ph1_filt, FS, f_cal_nkd, H_fused_nkd)
-                    ph2_filt = apply_frf(ph2_filt, FS, f_cal_nkd, H_fused_nkd)
                     spacing_meta = {
                         "close": {
                             "spacing_m": 2.8 * delta_i,
@@ -177,34 +191,39 @@ def save_corrected_pressure(
                         },
                     }
                     g_corr = g_corrected.create_group(sp)
-                    g_corr.create_dataset("PH1_Pa", data=ph1_filt)
-                    g_corr.create_dataset("PH2_Pa", data=ph2_filt)
                     meta = spacing_meta.get(sp)
                     if meta:
                         g_corr.attrs["spacing_m"] = meta["spacing_m"]
                         g_corr.attrs["x_PH1"] = meta["x_PH1"]
                         g_corr.attrs["x_PH2"] = meta["x_PH2"]
 
-                    nkd = g_nkd[f"{sp}/NC_Pa"][:]
-
-                    ph1_filt = ph1_filt - np.mean(ph1_filt)
-                    ph2_filt = ph2_filt - np.mean(ph2_filt)
-                    nkd = nkd - np.mean(nkd)
-
-                    ph1_filt = bandpass_filter(ph1_filt, FS, 1, analog_LP_filter[i])
-                    ph2_filt = bandpass_filter(ph2_filt, FS, 1, analog_LP_filter[i])
-                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
-
-                    ph1_clean = wiener_cancel_background(ph1_filt, nkd, FS)
-                    ph2_clean = wiener_cancel_background(ph2_filt, nkd, FS)
-
                     g_rej = g_rejected.create_group(sp)
-                    g_rej.create_dataset("PH1_Pa", data=ph1_clean)
-                    g_rej.create_dataset("PH2_Pa", data=ph2_clean)
                     if meta:
                         g_rej.attrs["spacing_m"] = meta["spacing_m"]
                         g_rej.attrs["x_PH1"] = meta["x_PH1"]
                         g_rej.attrs["x_PH2"] = meta["x_PH2"]
+
+                    nkd = np.asarray(g_nkd[f"{sp}/NC_Pa"][:], dtype=WORK_DTYPE)
+                    nkd = np.ascontiguousarray(nkd - nkd.mean(dtype=WORK_DTYPE))
+                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
+
+                    for channel in ("PH1", "PH2"):
+                        signal = np.asarray(g_raw[f"{sp}/{channel}_Pa"][:], dtype=WORK_DTYPE)
+                        signal = apply_frf(signal, FS, f_cal, H_cal, dtype=WORK_DTYPE)
+                        signal = apply_frf(signal, FS, f_cal_nkd, H_fused_nkd, dtype=WORK_DTYPE)
+                        signal = np.ascontiguousarray(signal)
+                        g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
+
+                        signal = np.ascontiguousarray(signal - signal.mean(dtype=WORK_DTYPE))
+                        signal = bandpass_filter(signal, FS, 1, analog_LP_filter[i])
+                        clean = _cancel_noise(signal, nkd, FS)
+                        g_rej.create_dataset(f"{channel}_Pa", data=clean, dtype="f4")
+
+                        del signal, clean
+                        gc.collect()
+
+                    del nkd
+                    gc.collect()
 
 
 if __name__ == "__main__":

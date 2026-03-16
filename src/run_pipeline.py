@@ -1,5 +1,5 @@
 """
-Run the full processing pipeline and then all plots.
+Run the processing pipeline without plots.
 """
 
 from __future__ import annotations
