@@ -10,7 +10,7 @@ from src.checks.plot.run_all import run_all as run_plots
 
 def run_pipeline() -> None:
     run_processing()
-    run_plots()
+    # run_plots()
 
 
 if __name__ == "__main__":
