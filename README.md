@@ -18,18 +18,6 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-By default the code works in:
-
-```text
-data/bump1
-```
-
-Override that with an environment variable if you want a different dataset root:
-
-```bash
-export PRESSUREPROCESS_ROOT_DIR=data/phase1
-```
-
 Run Commands
 ------------
 

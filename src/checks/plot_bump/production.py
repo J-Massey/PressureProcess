@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import h5py
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import welch, get_window
+from icecream import ic
 
-from src.config_params import Config
+import h5py
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.signal import get_window, welch
+
 from src.checks.plot._style import apply_plot_style, resolve_figure_dir
+from src.config_params import Config
 
 cfg = Config()
 
@@ -18,12 +20,16 @@ NPERSEG = 2**12
 WINDOW = cfg.WINDOW
 
 FIG_DIR = resolve_figure_dir(cfg.ROOT_DIR)
-POINT_COLOURS = ("#1e8ad8", "#ff7f0e", "#26bd26", "#d62728")
+ic(cfg.ROOT_DIR, FIG_DIR)
+
+POINT_COLOURS = ("#0b4eb2", "#d62728", "#26bd26", "#a51990")
+SPACING_ORDER = ("close", "far")
+CHANNEL_ORDER = ("PH1", "PH2")
 
 
 def compute_spec(x: np.ndarray, fs: float = FS, nperseg: int = NPERSEG):
     """Welch PSD with consistent settings. Returns f [Hz], Pxx [Pa^2/Hz]."""
-    x = np.asarray(x, float)
+    x = np.asarray(x, dtype=float)
     nseg = min(nperseg, x.size)
     if nseg < 16:
         raise ValueError(f"Signal too short for Welch: n={x.size}, nperseg={nperseg}")
@@ -41,43 +47,6 @@ def compute_spec(x: np.ndarray, fs: float = FS, nperseg: int = NPERSEG):
     return f, pxx
 
 
-def _scalar_attr(group: h5py.Group, name: str) -> float:
-    if name not in group.attrs:
-        return float("nan")
-    return float(np.atleast_1d(group.attrs[name])[0])
-
-
-def _collect_point_signals(g_corr: h5py.Group) -> list[dict[str, object]]:
-    points: list[dict[str, object]] = []
-    for spacing in g_corr.keys():
-        g_spacing = g_corr[spacing]
-        for channel_key in ("PH1_Pa", "PH2_Pa"):
-            if channel_key not in g_spacing:
-                continue
-            channel = channel_key.split("_")[0]
-            x_pos = _scalar_attr(g_spacing, f"x_{channel}")
-            points.append(
-                {
-                    "spacing": spacing,
-                    "channel": channel,
-                    "x_pos": x_pos,
-                    "signal": g_spacing[channel_key][:],
-                }
-            )
-
-    if not points:
-        return points
-
-    if all(np.isfinite(float(p["x_pos"])) for p in points):
-        points.sort(key=lambda p: float(p["x_pos"]))
-    else:
-        points.sort(key=lambda p: (str(p["spacing"]), str(p["channel"])))
-
-    for idx, point in enumerate(points, start=1):
-        point["point"] = f"P{idx}"
-    return points
-
-
 def _configure_axes(ax: plt.Axes, *, title: str) -> None:
     ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
     ax.set_title(title)
@@ -87,90 +56,122 @@ def _configure_axes(ax: plt.Axes, *, title: str) -> None:
     # ax.set_ylim(0, 6)
 
 
+def _iter_point_signals(g_corr: h5py.Group):
+    ordered_spacings = [spacing for spacing in SPACING_ORDER if spacing in g_corr]
+    ordered_spacings.extend(
+        spacing for spacing in g_corr.keys() if spacing not in ordered_spacings
+    )
+
+    for spacing in ordered_spacings:
+        g_spacing = g_corr[spacing]
+        for channel in CHANNEL_ORDER:
+            key = f"{channel}_Pa"
+            if key in g_spacing:
+                yield spacing, channel, np.asarray(g_spacing[key][:], dtype=float)
+
+
+def _compute_inner_curve(
+    signal: np.ndarray, *, fs: float, rho: float, u_tau: float, nu: float, f_cut: float
+) -> tuple[np.ndarray, np.ndarray] | None:
+
+    f, pxx = compute_spec(signal, fs=fs, nperseg=NPERSEG)
+
+    mask = f > 0.0
+    if not np.any(mask):
+        return None
+
+    f = f[mask]
+    pxx = pxx[mask]
+
+    t_plus = (u_tau**2) / (nu * f)
+    y = f * pxx / (rho**2 * u_tau**4)
+
+    t_plus_cut = (u_tau**2) / (nu * f_cut)
+    ic(f_cut, t_plus_cut)
+
+    mask = t_plus >= t_plus_cut
+    return t_plus[mask], y[mask]
+
+
 def plot_cleaned_by_case() -> None:
     with h5py.File(cfg.PH_PROCESSED_FILE, "r") as hf:
         g_root = hf["wallp_production"]
-        labels = list(g_root.keys())
-        if not labels:
+        ic(g_root.keys())
+
+        if not list(g_root.keys()):
             raise KeyError("No labels found in wallp_production")
 
         fs = float(hf.attrs.get("fs_Hz", FS))
-        for label in labels:
-            g_label = g_root[label]
+
+        for i, (label, g_label) in enumerate(g_root.items()):
             rho = float(np.atleast_1d(g_label.attrs["rho"])[0])
             u_tau = float(np.atleast_1d(g_label.attrs["u_tau"])[0])
             nu = float(np.atleast_1d(g_label.attrs["nu"])[0])
+            f_cut = [20, 70, 200][i]
+            ic(f_cut)
 
             g_corr = g_label["fs_noise_rejected_signals"]
-
-            point_signals = _collect_point_signals(g_corr)
+            point_signals = list(_iter_point_signals(g_corr))
             if not point_signals:
                 print(f"[skip] no corrected spacing groups for {label}")
                 continue
-            curve_data: list[dict[str, object]] = []
-            for point in point_signals:
-                f, pxx = compute_spec(np.asarray(point["signal"]), fs=fs, nperseg=NPERSEG)
-                mask = f > 0.0
-                if not np.any(mask):
+
+            curve_data: list[tuple[str, np.ndarray, np.ndarray]] = []
+            for idx, (spacing, channel, signal) in enumerate(point_signals, start=1):
+                try:
+                    curve = _compute_inner_curve(
+                        signal,
+                        fs=fs,
+                        rho=rho,
+                        u_tau=u_tau,
+                        nu=nu,
+                        f_cut=f_cut   # i = label index
+                    )
+                except ValueError:
+                    print(f"[skip] {label}: {spacing}/{channel} signal too short")
+                    continue
+                if curve is None:
                     continue
 
-                point_name = str(point["point"])
-                t_plus = (u_tau**2) / (nu * f[mask])
-                y = f[mask] * pxx[mask] / (rho**2 * u_tau**4)
-                curve_data.append(
-                    {
-                        "point": point_name,
-                        "t_plus": t_plus,
-                        "y": y,
-                    }
-                )
-                print(
-                    f"[info] {label}: {point_name} <- "
-                    f"{point['spacing']}/{point['channel']}"
-                )
+                point_name = f"P{idx}"
+                curve_data.append((point_name, curve[0], curve[1]))
+                print(f"[info] {label}: {point_name} <- {spacing}/{channel}")
 
             if not curve_data:
                 print(f"[skip] no usable corrected signals for {label}")
                 continue
 
-            fig, ax = plt.subplots(1, 1, figsize=(3.6, 3.2), tight_layout=True)
-            for idx, curve in enumerate(curve_data):
+            fig, ax = plt.subplots(1, 1, figsize=(3.0, 3.0), tight_layout=True)
+            for idx, (point_name, t_plus, y) in enumerate(curve_data):
                 ax.semilogx(
-                    np.asarray(curve["t_plus"]),
-                    np.asarray(curve["y"]),
-                    color=POINT_COLOURS[idx % len(POINT_COLOURS)],
-                    linewidth=1.0,
-                    label=str(curve["point"]),
-                )
-            _configure_axes(ax, title=f"{label} (P1-P4)")
-            ax.legend(title="Point", fontsize=8)
-
-            combined_outs = [
-                FIG_DIR / f"G_wallp_SU_production_{label}_P_all.png",
-                FIG_DIR / f"G_wallp_SU_production_{label}.png",
-            ]
-            for out in combined_outs:
-                plt.savefig(out, dpi=600)
-                print(f"[ok] wrote {out}")
-            plt.close(fig)
-
-            for idx, curve in enumerate(curve_data):
-                point_name = str(curve["point"])
-                fig, ax = plt.subplots(1, 1, figsize=(3.4, 3.1), tight_layout=True)
-                ax.semilogx(
-                    np.asarray(curve["t_plus"]),
-                    np.asarray(curve["y"]),
+                    t_plus,
+                    y,
                     color=POINT_COLOURS[idx % len(POINT_COLOURS)],
                     linewidth=1.0,
                     label=point_name,
                 )
-                _configure_axes(ax, title=f"{label} ({point_name})")
-                ax.legend(fontsize=8)
+            _configure_axes(ax, title=f"{label} (P1-P4)")
+            ax.legend(title="Point", fontsize=8)
 
-                out = FIG_DIR / f"G_wallp_SU_production_{label}_{point_name}.png"
-                plt.savefig(out, dpi=600)
-                plt.close(fig)
-                print(f"[ok] wrote {out}")
+            fig.savefig(FIG_DIR / f"G_wallp_SU_production_{label}_P_all.png", dpi=600)
+            plt.close(fig)
+
+            # for idx, (point_name, t_plus, y) in enumerate(curve_data):
+            #     fig, ax = plt.subplots(1, 1, figsize=(3.0, 3.0), tight_layout=True)
+            #     ax.semilogx(
+            #         t_plus,
+            #         y,
+            #         color=POINT_COLOURS[idx % len(POINT_COLOURS)],
+            #         linewidth=1.0,
+            #         label=point_name,
+            #     )
+            #     _configure_axes(ax, title=f"{label} ({point_name})")
+            #     ax.legend(fontsize=8)
+
+            #     output = FIG_DIR / f"G_wallp_SU_production_{label}_{point_name}.png"
+            #     fig.savefig(output, dpi=600)
+            #     plt.close(fig)
+            #     print(f"[ok] wrote {output}")
 
 
 if __name__ == "__main__":
