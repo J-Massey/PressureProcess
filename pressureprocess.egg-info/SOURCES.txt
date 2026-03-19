@@ -35,6 +35,7 @@ src/save/pw_proc.py
 src/save/pw_raw.py
 src/save/run_all.py
 tests/test_config_params.py
+tests/test_memory_hotpaths.py
 tests/test_plot_run_all.py
 tests/test_plot_style.py
 tests/test_run_pipeline.py

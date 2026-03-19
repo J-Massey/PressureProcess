@@ -79,6 +79,7 @@ def test_run_all_uses_bump_raw_plots_for_bump_dataset(monkeypatch) -> None:
     assert "bump_fs_raw" in calls
     assert "bump_wall_raw" in calls
     assert "bump_wall_prod" in calls
+    assert "fs_prod" not in calls
     assert "generic_fs_raw" not in calls
     assert "generic_wall_raw" not in calls
     assert "wall_prod" not in calls
@@ -95,6 +96,7 @@ def test_run_all_uses_generic_raw_plots_for_non_bump_dataset(monkeypatch) -> Non
     plot_run_all.run_all()
 
     assert "generic_fs_raw" in calls
+    assert "fs_prod" in calls
     assert "generic_wall_raw" in calls
     assert "wall_prod" in calls
     assert "bump_fs_raw" not in calls

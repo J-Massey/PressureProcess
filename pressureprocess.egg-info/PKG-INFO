@@ -19,76 +19,86 @@ Requires-Dist: pytest-cov>=5.0; extra == "dev"
 PressureProcess
 ===============
 
-This module performs pressure processing for two microphones. It ingests raw
-mat files, computes calibration transfer functions, saves raw HDF5 products,
-then applies those transfer functions to produce processed HDF5 outputs. It
-also includes plotting sanity checks.
+PressureProcess is a Python pipeline for wall-pressure and freestream-pressure
+processing. It reads raw MATLAB files, computes calibration transfer functions,
+writes intermediate and processed HDF5 products, and can generate sanity-check
+plots for the selected dataset root.
 
-Install
--------
-From the repository root:
-```
-python -m pip install -e .
-```
-or:
-```
-python -m pip install .
-```
+Quick Start
+-----------
 
-Tests and coverage
-------------------
-Install test tooling:
-```
+Recommended local setup:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-Run coverage:
-```
-pytest --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
+Run Commands
+------------
+
+Processing only:
+
+```bash
+python -m src.run_pipeline
 ```
 
-Docker
-------
-Build:
-```
-docker build -t pressureprocess .
+Plots only:
+
+```bash
+python -m src.checks.plot.run_all
 ```
 
-Run (mount local `data/` and `figures/`):
-```
-docker run --rm \
-  --memory=8g \
-  --cpus=4 \
-  --user "$(id -u):$(id -g)" \
-  -e PRESSUREPROCESS_ROOT_DIR=data/phase1 \
-  -e PRESSUREPROCESS_USE_TEX=auto \
-  -e TORCH_NUM_THREADS=1 \
-  -v "$(pwd)/data:/app/data:Z" \
-  -v "$(pwd)/figures:/app/figures:Z" \
-  pressureprocess
+Processing and plots in one command:
+
+```bash
+python -m src.run_bump_plots
 ```
 
 Notes:
-- `PRESSUREPROCESS_ROOT_DIR` controls where the pipeline looks for inputs and writes outputs.
-- The image installs CPU-only PyTorch and conservative thread defaults to reduce memory pressure on smaller hosts.
-- `--user "$(id -u):$(id -g)"` avoids host/container ownership mismatches.
-- `:Z` on bind mounts applies SELinux relabeling (needed on Fedora/RHEL/CentOS systems).
-- `PRESSUREPROCESS_USE_TEX` controls LaTeX labels in plots: `auto` (default), `true`, `false`.
-  In `auto`, LaTeX is used only if a `latex` binary is available.
 
-Usage overview
---------------
-1) Define the required file structure and raw variable names.
-2) Set user parameters in `src/config_params.py` and/or `PRESSUREPROCESS_ROOT_DIR`.
-3) Run the pipeline with `python -m src.run_pipeline`.
+- `src.run_pipeline` currently runs the save pipeline only.
+- `src.run_bump_plots` is the current combined "process, then plot" entry point.
+- Plot output is written under `figures/<ROOT_DIR>/...`.
 
-Required file structure
------------------------
-All paths are rooted at `ROOT_DIR` in `src/config_params.py`.
+Pipeline Outputs
+----------------
 
-Raw wall pressure mat files
+For a dataset root such as `data/bump1`, the pipeline writes:
+
+```text
+data/bump1/calibration/PH/calibs_0.h5
+data/bump1/calibration/PH/calibs_50.h5
+data/bump1/calibration/PH/calibs_100.h5
+
+data/bump1/calibration/NC/calibs_0.h5
+data/bump1/calibration/NC/calibs_50.h5
+data/bump1/calibration/NC/calibs_100.h5
+
+data/bump1/pressure/F_freestreamp_SU_raw.hdf5
+data/bump1/pressure/F_freestreamp_SU_production.hdf5
+data/bump1/pressure/G_wallp_SU_raw.hdf5
+data/bump1/pressure/G_wallp_SU_production.hdf5
 ```
-data/phase1/raw_wallp/
+
+Details:
+
+- `calibration/PH` is produced from the PH semi-anechoic calibration runs.
+- `calibration/NC` is only produced when NC calibration generation is enabled.
+- `pressure/F_*` stores freestream-pressure products.
+- `pressure/G_*` stores wall-pressure products.
+
+Required Input Layout
+---------------------
+
+All paths below are relative to `PRESSUREPROCESS_ROOT_DIR` / `Config.ROOT_DIR`.
+
+Wall-pressure runs:
+
+```text
+ROOT_DIR/raw_wallp/
   close/
     0psig.mat
     50psig.mat
@@ -99,9 +109,10 @@ data/phase1/raw_wallp/
     100psig.mat
 ```
 
-Raw calibration mat files for PH to NC
-```
-data/phase1/raw_calib/PH/
+PH calibration runs:
+
+```text
+ROOT_DIR/raw_calib/PH/
   calib_0psig_1.mat
   calib_0psig_2.mat
   calib_50psig_1.mat
@@ -110,9 +121,10 @@ data/phase1/raw_calib/PH/
   calib_100psig_2.mat
 ```
 
-Raw calibration mat files for NC to NKD
-```
-data/phase1/raw_calib/NC/
+Optional NC calibration runs:
+
+```text
+ROOT_DIR/raw_calib/NC/
   0psig/
     nkd-ns_nofacilitynoise.mat
   50psig/
@@ -121,45 +133,124 @@ data/phase1/raw_calib/NC/
     nkd-ns_nofacilitynoise.mat
 ```
 
-Raw variable names expected in mat files
-----------------------------------------
-For wall pressure and freestream raw files, the loader expects:
-```
+NC calibration files are optional. If you do not have them, leave
+`RUN_NC_CALIBS = False` in `src/config_params.py` and the production stages
+will fall back to an identity NC FRF.
+
+Expected MATLAB Variables
+-------------------------
+
+Wall-pressure runs and freestream extraction expect:
+
+```text
 channelData
 ```
+
 with columns ordered as:
-```
+
+```text
 PH1, PH2, NC
 ```
 
-For PH to NC calibration files, the loader expects:
-```
+PH calibration runs expect either:
+
+```text
 channelData_WN
 ```
-with columns ordered as:
+
+or:
+
+```text
+channelData
 ```
+
+with columns ordered as:
+
+```text
 PH1, PH2, NC, ...
 ```
 
-For NC to NKD calibration files, the loader expects:
-```
+NC calibration runs expect:
+
+```text
 channelData
 ```
-and for 100psig only:
-```
+
+and for the `100psig` case only:
+
+```text
 channelData_nofacitynoise
 ```
 
-Configure user parameters
--------------------------
-Edit `src/config_params.py` to set:
- - ROOT_DIR (or set env var `PRESSUREPROCESS_ROOT_DIR`)
- - LABELS, PSIGS, U_TAU, U_TAU_REL_UNC, U_E, ANALOG_LP_FILTER, F_CUTS
- - SENSITIVITIES_V_PER_PA
- - SPACINGS
- - RUN_NC_CALIBS
- - INCLUDE_NC_CALIB_RAW
+That `nofacitynoise` spelling is not a typo in this README; it matches the
+loader's current key.
 
-Path fields (`RAW_CAL_BASE`, `RAW_BASE`, `TF_BASE`, `PH_RAW_FILE`,
-`PH_PROCESSED_FILE`, `NKD_RAW_FILE`, `NKD_PROCESSED_FILE`) are derived from
-`ROOT_DIR`.
+Configuration
+-------------
+
+Most settings live in `src/config_params.py`.
+
+Common environment variables:
+
+- `PRESSUREPROCESS_ROOT_DIR`: dataset root to read from and write into.
+- `PRESSUREPROCESS_PW_DENOISER`: `auto`, `hybrid`, or `wiener`.
+- `PRESSUREPROCESS_USE_TEX`: `auto`, `true`, or `false` for plot text rendering.
+
+Important config fields in `Config`:
+
+- `LABELS`, `PSIGS`
+- `U_TAU`, `U_TAU_REL_UNC`, `U_E`
+- `ANALOG_LP_FILTER`, `F_CUTS`
+- `SPACINGS`
+- `RUN_NC_CALIBS`
+- `INCLUDE_NC_CALIB_RAW`
+- `SENSITIVITIES_V_PER_PA`
+
+Notes:
+
+- `RUN_NC_CALIBS` defaults to `False`.
+- `INCLUDE_NC_CALIB_RAW` defaults to `False`.
+- `PRESSUREPROCESS_PW_DENOISER=auto` is the default. On large macOS runs, the
+  code will choose the lighter hybrid wall-pressure noise canceller to reduce
+  memory pressure.
+
+Testing
+-------
+
+Run the test suite with:
+
+```bash
+pytest
+```
+
+Docker (Last Resort)
+--------------------
+
+Use Docker only if you do not want to manage a local Python environment.
+
+Build:
+
+```bash
+docker build -t pressureprocess .
+```
+
+Run:
+
+```bash
+docker run --rm \
+  --memory=8g \
+  --cpus=4 \
+  --user "$(id -u):$(id -g)" \
+  -e PRESSUREPROCESS_ROOT_DIR=data/bump1 \
+  -e PRESSUREPROCESS_USE_TEX=auto \
+  -e TORCH_NUM_THREADS=1 \
+  -v "$(pwd)/data:/app/data:Z" \
+  -v "$(pwd)/figures:/app/figures:Z" \
+  pressureprocess
+```
+
+Notes:
+
+- `--user "$(id -u):$(id -g)"` avoids host/container ownership mismatches.
+- `:Z` on bind mounts is only needed on SELinux systems such as Fedora/RHEL.
+- The image installs CPU-only PyTorch and conservative thread defaults.

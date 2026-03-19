@@ -29,10 +29,10 @@ def run_all() -> None:
         F_freestreamp_SU_raw.plot_fs_raw()
         G_wallp_SU_raw.plot_raw()
 
-    F_freestreamp_SU_production.plot_fs_raw()
     if dataset_name.startswith("bump"):
         bump_production.plot_cleaned_by_case()
     else:
+        F_freestreamp_SU_production.plot_fs_raw()
         G_wallp_SU_production.plot_model_comparison_roi()
 
     if {"close", "far"}.issubset(set(cfg.SPACINGS)):
