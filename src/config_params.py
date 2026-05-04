@@ -13,13 +13,13 @@ def _profile_name() -> str:
     return os.getenv("PRESSUREPROCESS_PROFILE", "").strip().lower()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Config:
     # --- Experiment/run metadata defaults ---
     ROOT_DIR: str = field(
         default_factory=lambda: os.getenv(
             "PRESSUREPROCESS_ROOT_DIR",
-            "data/bump1",
+            "data/iso_re",
         )
     )
     LABELS: tuple[str, str, str] = field(

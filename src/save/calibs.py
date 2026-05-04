@@ -18,7 +18,6 @@ from src.config_params import Config
 
 cfg = Config()  # load the config parameters (file paths, constants, etc.) from a central location to ensure consistency
 
-
 def _extract_channel_data(mat_obj: dict) -> object:
     if "channelData_WN" in mat_obj:
         return mat_obj["channelData_WN"]
@@ -39,14 +38,14 @@ def _save_ph_tf_plot(
     g2_fused: np.ndarray,
 ) -> None:
     apply_plot_style()
-    fig_dir = resolve_figure_dir(cfg.ROOT_DIR) / "calibration"
+    fig_dir = resolve_figure_dir(Path(cfg.ROOT_DIR).name) / "calibration"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     fig, (ax_mag, ax_coh) = plt.subplots(2, 1, figsize=(6.0, 4.8), tight_layout=True)
 
     for f_i, h_i, label, color in (
-        (f1, H1, "PH1->NC", "#1e8ad8"),
-        (f2, H2, "PH2->NC", "#ff7f0e"),
+        (f1, H1, "PH1-NC", "#1e8ad8"),
+        (f2, H2, "PH2-NC", "#ff7f0e"),
         (f_fused, H_fused, "Fused", "#111111"),
     ):
         mask = np.asarray(f_i) > 0.0
@@ -69,14 +68,17 @@ def _save_ph_tf_plot(
     ax_mag.set_ylabel(r"$|H(f)|$ [dB]")
     ax_mag.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
     ax_mag.legend(fontsize=8)
+    ax_mag.set_ylim(-7.0, 5.0)
 
-    ax_coh.set_xlabel("Frequency [Hz]")
+
+    ax_coh.set_xlabel("$f$ [Hz]")
     ax_coh.set_ylabel(r"$\gamma^2$")
     ax_coh.set_ylim(0.0, 1.05)
     ax_coh.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
     ax_coh.legend(fontsize=8)
 
     out = fig_dir / f"PH_tf_{p_si}psig.png"
+    print(out)
     plt.savefig(out, dpi=300)
     plt.close(fig)
     print(f"[ok] TF check plot {out}")
@@ -100,11 +102,9 @@ def save_PH_calibs(
     base = Path(cfg.RAW_CAL_BASE) / "PH"
     out_dir = Path(cfg.TF_BASE) / "PH"
     out_dir.mkdir(parents=True, exist_ok=True)
-    pressures = [int(p) for p in cfg.PSIGS]
-    if len(cfg.F_CUTS) != len(pressures):
-        raise ValueError("f_cuts length must match number of pressures")
+    pressures = [int(p) for p in cfg.PSIGS[:1]]  # only do the first pressure for now
 
-    for p_si, fcut in zip(pressures, cfg.F_CUTS):
+    for p_si, fcut in zip(pressures, cfg.F_CUTS[:1]):
         psig = float(p_si)
         # ---- run 1: PH1 to NC
         m1 = loadmat(base / f"calib_{p_si}psig_1.mat")

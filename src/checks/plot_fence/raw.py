@@ -19,7 +19,7 @@ WINDOW  = cfg.WINDOW
 LABELS = ("0psig", "50psig", "100psig")
 PSIGS  = (0.0, 50.0, 100.0)
 COLOURS = ("#1e8ad8", "#ff7f0e", "#26bd26")  # hex equivalents of C0, C1, C2
-FIG_DIR = resolve_figure_dir(cfg.ROOT_DIR)
+FIG_DIR = "figures/fence"
 
 
 def compute_spec(x: np.ndarray, fs: float = FS, nperseg: int = NPERSEG):
@@ -90,8 +90,9 @@ def plot_fs_raw():
     plt.savefig(FIG_DIR / "freestreamp_bump_raw.png", dpi=600)
 
 
+
 def plot_raw():
-    with h5py.File(cfg.PH_RAW_FILE, "r") as f_raw:
+    with h5py.File("/home/masseyj/Workspace/SAPPHiRe/PressureProcess/data/fence/ATM_Rev1.mat", "r") as f_raw:
         g_root = f_raw["wallp_raw"]
         labels = list(g_root.keys())
         if not labels:
@@ -146,9 +147,51 @@ def plot_raw():
     plt.savefig(FIG_DIR / "wallp_bump_raw.png", dpi=600)
 
 
+def plot_fence_raw_ts():
+    # load .mat, define ph1, ph2 and nc, plot raw time series and spectrafn = "data/fence/ATM_Rev1.mat"
+    # Load .mat file and print its structure
+    import scipy.io
+    fn = "data/fence/ATM_Rev1.mat"
+    mat_data = scipy.io.loadmat(fn)
+    channelData = mat_data.get("channelData")
+    PH1 = channelData[:, 0]
+    PH2 = channelData[:, 1]
+    NC = channelData[:, 2]
+    t = np.arange(channelData.shape[0]) / FS
+    fig, ax = plt.subplots()
+    ax.plot(t[1000:10000], PH1[1000:10000], lw=0.25)
+    ax.plot(t[1000:10000], PH2[1000:10000], lw=0.25)
+    ax.plot(t[1000:10000], NC[1000:10000], lw=0.25)
+    plt.savefig(FIG_DIR + "/raw_time_series.png", dpi=600)
+
+def plot_fence_raw_spec():
+    # load .mat, define ph1, ph2 and nc, plot raw time series and spectrafn = "data/fence/ATM_Rev1.mat"
+    # Load .mat file and print its structure
+    import scipy.io
+    fn = "data/fence/ATM_Rev1.mat"
+    mat_data = scipy.io.loadmat(fn)
+    channelData = mat_data.get("channelData")
+    PH1 = channelData[:, 0]
+    PH2 = channelData[:, 1]
+    NC = channelData[:, 2]
+    f, Pxx_PH1 = compute_spec(PH1, fs=FS, nperseg=NPERSEG)
+    f, Pxx_PH2 = compute_spec(PH2, fs=FS, nperseg=NPERSEG)
+    f, Pxx_NC = compute_spec(NC, fs=FS, nperseg=NPERSEG)
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot(f, f*Pxx_PH1, lw=0.7, label="PH1")
+    ax.plot(f, f*Pxx_PH2, lw=0.7, label="PH2")
+    ax.plot(f, f*Pxx_NC, lw=0.5, label="NC")
+
+    ax.set_ylim(0, 0.01)
+
+    ax.set_xlabel("$f$ [Hz]")
+    ax.set_ylabel(r"$f \phi_{pp}$[V$^2$ s$^{-1}$]")
+    ax.set_xscale("log")
+    ax.legend()
+    plt.savefig(FIG_DIR + "/raw_spectra.png", dpi=600)
 
 
 
 if __name__ == "__main__":
-    plot_fs_raw()
-    plot_raw()
+    plot_fence_raw_ts()
+    plot_fence_raw_spec()
