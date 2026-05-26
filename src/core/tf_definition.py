@@ -14,6 +14,18 @@ def _interp_complex(f_src: np.ndarray, z_src: np.ndarray, f_tgt: np.ndarray) -> 
     return re + 1j * im
 
 
+def smooth_frf_logfreq(
+    f: np.ndarray,
+    H: np.ndarray,
+    *,
+    span_oct: float = 1 / 6,
+    ppo: int = 48,
+    eps: float = 1e-20,
+) -> np.ndarray:
+    """Public alias of _complex_smooth_logfreq for smoothing a complex FRF."""
+    return _complex_smooth_logfreq(f, H, span_oct=span_oct, ppo=ppo, eps=eps)
+
+
 def _complex_smooth_logfreq(
     f: np.ndarray,
     z: np.ndarray,

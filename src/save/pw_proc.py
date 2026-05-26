@@ -107,7 +107,7 @@ def save_corrected_pressure(
 
     with h5py.File(ph_processed, 'w') as hf:
         # --- file-level metadata ---
-        hf.attrs['title'] = "Wall-pressure (pin-hole) - processed & FRF from calibration"
+        hf.attrs['title'] = "Wall-pressure (pin-hole) - processed \& FRF from calibration"
         hf.attrs['fs_Hz'] = FS
         hf.attrs['Ue_m_per_s'] = np.asarray(Ue, float)
         hf.attrs['DAQ'] = "24-bit"

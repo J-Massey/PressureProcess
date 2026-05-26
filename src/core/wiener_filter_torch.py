@@ -372,6 +372,7 @@ def wiener_cancel_background(
     cg_maxiter: int = 128,
     preserve_mean: bool = True,
     return_noise_estimate: bool = False,
+    return_kernel: bool = False,
 ):
     """
     Time-domain Wiener noise canceller (FIR) using Toeplitz + CG + FFT.
@@ -525,7 +526,7 @@ def wiener_cancel_background(
     w = torch.flip(c, dims=(0,)).view(1, 1, m)   # conv1d is correlation
     x_pad = F.pad(x, (m - 1, 0))
     pb_hat = F.conv1d(x_pad, w).view(-1)         # length N
-    del x, x_pad, w, c
+    del x, x_pad, w
 
     # ------------ cleaned wall pressure p_hat = p0 - alpha * p_hat_b ------------
     p_clean = p0_zm - alpha * pb_hat
@@ -533,9 +534,89 @@ def wiener_cancel_background(
         p_clean = p_clean + mu_p0
 
     p_clean_np = p_clean.detach().cpu().numpy()
+    extras = []
     if return_noise_estimate:
-        pb_hat_np = pb_hat.detach().cpu().numpy()
-        return p_clean_np, pb_hat_np
+        extras.append(pb_hat.detach().cpu().numpy())
+    if return_kernel:
+        extras.append(c.detach().cpu().numpy())
+    del c
+    if extras:
+        return (p_clean_np, *extras)
+    return p_clean_np
+
+
+def apply_wiener_kernel(
+    p0,
+    pn,
+    c,
+    *,
+    alpha: float = 1.0,
+    preserve_mean: bool = True,
+    device=None,
+    dtype=torch.float32,
+    return_noise_estimate: bool = False,
+):
+    """
+    Apply a pre-trained Wiener FIR kernel `c` to a new (p0, pn) pair.
+
+    Computes p_clean = p0 - alpha * (c * pn), where (*) is causal convolution
+    on the demeaned `pn`. Use this to transplant a Wiener filter learned on
+    a "donor" case (e.g. smooth wall, where the noise reference is dominated
+    by facility noise) onto a "recipient" case (e.g. bump/fence) where
+    running Wiener locally would erase coherent flow-radiated content.
+
+    Parameters
+    ----------
+    p0, pn : array_like
+        Wall-pressure signal (p0) and freestream noise reference (pn).
+    c : array_like
+        FIR coefficients (length m) returned by wiener_cancel_background
+        with return_kernel=True. The donor trained them on its own demeaned
+        signals; here we demean pn the same way before applying.
+    alpha : float
+        Leak factor (0<alpha<=1). 1.0 reproduces the donor's full subtraction.
+    preserve_mean : bool
+        If True, re-adds mean(p0) at the end.
+    return_noise_estimate : bool
+        If True, also return p_hat_b = c * pn.
+    """
+    if device is None:
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+    def _as_t(x):
+        if isinstance(x, torch.Tensor):
+            return x.to(device=device, dtype=dtype).flatten()
+        arr = np.ascontiguousarray(np.asarray(x))
+        return torch.as_tensor(arr, device=device, dtype=dtype).flatten()
+
+    p0_t = _as_t(p0)
+    pn_t = _as_t(pn)
+    c_t = _as_t(c)
+
+    N = int(min(p0_t.numel(), pn_t.numel()))
+    p0_t = p0_t[:N]
+    pn_t = pn_t[:N]
+    m = int(c_t.numel())
+    if m < 1 or m > N:
+        raise ValueError("kernel length must be in [1, len(signal)].")
+
+    mu_p0 = p0_t.mean()
+    mu_pn = pn_t.mean()
+    p0_zm = p0_t - mu_p0
+    pn_zm = pn_t - mu_pn
+
+    x = pn_zm.view(1, 1, N)
+    w = torch.flip(c_t, dims=(0,)).view(1, 1, m)
+    x_pad = F.pad(x, (m - 1, 0))
+    pb_hat = F.conv1d(x_pad, w).view(-1)
+
+    p_clean = p0_zm - alpha * pb_hat
+    if preserve_mean:
+        p_clean = p_clean + mu_p0
+
+    p_clean_np = p_clean.detach().cpu().numpy()
+    if return_noise_estimate:
+        return p_clean_np, pb_hat.detach().cpu().numpy()
     return p_clean_np
 
 

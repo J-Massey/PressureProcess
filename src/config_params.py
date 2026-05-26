@@ -19,7 +19,7 @@ class Config:
     ROOT_DIR: str = field(
         default_factory=lambda: os.getenv(
             "PRESSUREPROCESS_ROOT_DIR",
-            "data/iso_re",
+            "data/phase1",
         )
     )
     LABELS: tuple[str, str, str] = field(

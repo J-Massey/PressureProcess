@@ -238,5 +238,170 @@ def plot_model_comparison_roi():
                     print(f"[ok] wrote {out}")
                 plt.close(fig)
 
+def plot_stages_3panel():
+    """
+    One 3-panel figure per channel (PH1, PH2) for phase1, one panel per
+    pressure (0/50/100 psig). Same inner-scaled axes, ROI, models, and
+    u_tau uncertainty fan as plot_model_comparison_roi, but with three
+    stages overlaid per panel:
+      - raw            (grey, dotted)        from wallp_raw
+      - FRF-corrected  (pressure colour, dashed)  from frf_corrected_signals
+      - Wiener-rejected (pressure colour, solid)  from fs_noise_rejected_signals
+    """
+    f_cutl, f_cuth = 100.0, 1_000.0
+    channel_keys = ("PH1_Pa", "PH2_Pa")
+
+    with h5py.File(cfg.PH_RAW_FILE, "r") as hf_raw, \
+         h5py.File(cfg.PH_PROCESSED_FILE, "r") as hf_prod:
+        g_raw_root = hf_raw["wallp_raw"]
+        g_prod_root = hf_prod["wallp_production"]
+        labels = [L for L in LABELS if L in g_prod_root]
+        if not labels:
+            print("[skip] no labels in wallp_production")
+            return
+
+        fs = float(hf_prod.attrs.get("fs_Hz", FS))
+
+        for channel_key in channel_keys:
+            channel_tag = channel_key.split("_")[0]
+            fig, axes = plt.subplots(
+                1, len(labels),
+                figsize=(3.0 * len(labels), 3.1),
+                sharey=True, tight_layout=True, squeeze=False,
+            )
+            axes = axes[0]
+
+            for i, L in enumerate(labels):
+                ax = axes[i]
+                gL_prod = g_prod_root[L]
+                gL_raw = g_raw_root[L] if L in g_raw_root else None
+                g_frf = gL_prod.get("frf_corrected_signals")
+                g_rej = gL_prod.get("fs_noise_rejected_signals")
+                if g_rej is None:
+                    ax.set_visible(False)
+                    continue
+
+                available_spacings = [sp for sp in ("far", "close") if sp in g_rej]
+                if not available_spacings:
+                    ax.set_visible(False)
+                    continue
+                sp_model = "far" if "far" in available_spacings else available_spacings[0]
+                sp_roi = "close" if "close" in available_spacings else available_spacings[0]
+                if channel_key not in g_rej[sp_roi]:
+                    ax.set_visible(False)
+                    continue
+
+                Ue = _get_ue(hf_prod, gL_prod, i)
+                u_tau = float(np.atleast_1d(gL_prod.attrs["u_tau"])[0])
+                nu = float(np.atleast_1d(gL_prod.attrs["nu"])[0])
+                rho = float(np.atleast_1d(gL_prod.attrs["rho"])[0])
+                Re_tau = float(np.atleast_1d(gL_prod.attrs["Re_tau"])[0])
+                u_tau_rel_unc = float(
+                    np.atleast_1d(gL_prod.attrs.get("u_tau_rel_unc", 0.0))[0]
+                )
+                colour = COLOURS[i % len(COLOURS)]
+
+                sig_model = g_rej[sp_model][channel_key][:]
+                f_model, _ = compute_spec(sig_model, fs=fs, nperseg=NPERSEG)
+                model_mask = f_model > 0.0
+                if not np.any(model_mask):
+                    ax.set_visible(False)
+                    continue
+                f_model = f_model[model_mask]
+                t_plus_model = (u_tau ** 2) / (nu * f_model)
+                cf_2 = (u_tau / Ue) ** 2
+
+                g1_b, g2_b, rv_b = bl_model(t_plus_model, Re_tau, cf_2)
+                g1_c, g2_c, rv_c = channel_model(t_plus_model, Re_tau, u_tau, u_cl=Ue)
+                bl_fphipp_plus = rv_b * (g1_b + g2_b)
+                channel_fphipp_plus = rv_c * (g1_c + g2_c)
+
+                ax.semilogx(t_plus_model, bl_fphipp_plus,
+                            linestyle="--", color=colour, lw=0.7)
+                ax.semilogx(t_plus_model, channel_fphipp_plus,
+                            linestyle="-.", color=colour, lw=0.7)
+
+                # ROI for the data line (same as plot_model_comparison_roi).
+                f_roi, p_rej = compute_spec(g_rej[sp_roi][channel_key][:],
+                                            fs=fs, nperseg=NPERSEG)
+                mask = (f_roi > f_cutl) & (f_roi < f_cuth)
+                if not np.any(mask):
+                    ax.set_visible(False)
+                    continue
+                f_m = f_roi[mask]
+                P_rej_m = p_rej[mask]
+
+                u_nom = u_tau
+                u_lo = u_nom * (1.0 - u_tau_rel_unc)
+                u_hi = u_nom * (1.0 + u_tau_rel_unc)
+                u_grid = np.linspace(u_lo, u_hi, 16)
+                mid = 0.5 * (u_lo + u_hi)
+                span = (u_hi - u_lo)
+                order = np.argsort(np.abs(u_grid - u_nom))[::-1]
+                for j in order:
+                    u = u_grid[j]
+                    T = (u ** 2) / (nu * f_m)
+                    Y = (f_m * P_rej_m) / (rho ** 2 * u ** 4)
+                    ax.semilogx(
+                        T, Y,
+                        color=to_rgba("gray", _fade_alpha(float(u), mid=mid, span=span)),
+                        linewidth=1.0,
+                    )
+
+                T_nom = (u_nom ** 2) / (nu * f_m)
+
+                # raw (pre-FRF, pre-bandpass)
+                if gL_raw is not None and sp_roi in gL_raw and channel_key in gL_raw[sp_roi]:
+                    f_r, p_r = compute_spec(gL_raw[sp_roi][channel_key][:],
+                                            fs=fs, nperseg=NPERSEG)
+                    mr = (f_r > f_cutl) & (f_r < f_cuth)
+                    Y_raw = (f_r[mr] * p_r[mr]) / (rho ** 2 * u_nom ** 4)
+                    ax.semilogx((u_nom ** 2) / (nu * f_r[mr]), Y_raw,
+                                color="#555555", linestyle=":", lw=0.9, alpha=0.7)
+
+                # FRF-corrected (PH->NC->nkd, no Wiener)
+                if g_frf is not None and sp_roi in g_frf and channel_key in g_frf[sp_roi]:
+                    f_c, p_c = compute_spec(g_frf[sp_roi][channel_key][:],
+                                            fs=fs, nperseg=NPERSEG)
+                    mc = (f_c > f_cutl) & (f_c < f_cuth)
+                    Y_frf = (f_c[mc] * p_c[mc]) / (rho ** 2 * u_nom ** 4)
+                    ax.semilogx((u_nom ** 2) / (nu * f_c[mc]), Y_frf,
+                                color=colour, linestyle="--", lw=0.9, alpha=0.7)
+
+                # Wiener-rejected (nominal-u_tau data line, on top)
+                Y_rej = (f_m * P_rej_m) / (rho ** 2 * u_nom ** 4)
+                ax.semilogx(T_nom, Y_rej, color=colour, linewidth=1.2, zorder=10)
+
+                ax.set_title(f"phase1 {L}")
+                ax.set_xlabel(r"$T^+$")
+                if i == 0:
+                    ax.set_ylabel(r"$({f \phi_{pp}}^+)_{\mathrm{corr.}}$")
+                ax.set_xlim(7, 7_000)
+                ax.set_ylim(0, 6)
+                ax.grid(True, which="major", linestyle="--", linewidth=0.4, alpha=0.7)
+
+            legend_lines = [
+                Line2D([0], [0], color="black", linestyle="--", lw=0.7),
+                Line2D([0], [0], color="black", linestyle="-.", lw=0.7),
+                Line2D([0], [0], color="#555555", linestyle=":", lw=0.9, alpha=0.7),
+                Line2D([0], [0], color="black", linestyle="--", lw=0.9, alpha=0.7),
+                Line2D([0], [0], color="black", linestyle="-", lw=1.2),
+            ]
+            legend_labels = [
+                "BL model",
+                "Channel model",
+                "raw",
+                "FRF-corrected",
+                "Wiener-rejected",
+            ]
+            axes[0].legend(legend_lines, legend_labels, loc="upper right", fontsize=7)
+
+            out = FIG_DIR / f"G_wallp_SU_production_stages_{channel_tag}.png"
+            fig.savefig(out, dpi=600)
+            plt.close(fig)
+            print(f"[ok] wrote {out}")
+
+
 if __name__ == "__main__":
-    plot_model_comparison_roi()
+    # plot_model_comparison_roi()
+    plot_stages_3panel()

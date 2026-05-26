@@ -34,6 +34,7 @@ def run_all() -> None:
     else:
         F_freestreamp_SU_production.plot_fs_raw()
         G_wallp_SU_production.plot_model_comparison_roi()
+        G_wallp_SU_production.plot_stages_3panel()
 
     if {"close", "far"}.issubset(set(cfg.SPACINGS)):
         SU_two_point.plot_2pt_inner()

@@ -1,0 +1,91 @@
+"""
+Config parameters for the bump (rough surface) pipeline.
+
+Hard-coded for the bump1 case. Tune values here, not via env vars.
+
+The bump1 data has the same outer layout as the phase1 (smooth) case
+— (0, 50, 100) psig, close+far spacings, and full NC semi-anechoic calibration
+— but the surface is rough, so quantities like u_tau, delta, and the various
+length scales need tuning here independently of the smooth case.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=False)
+class Config:
+    # --- Case identity ---
+    CASE: str = "bump"
+    ROOT_DIR: str = "data/bump1"
+
+    # --- Experiment/run metadata (TUNE these for the rough surface) ---
+    LABELS: tuple[str, str, str] = ("0psig", "50psig", "100psig")
+    PSIGS: tuple[float, float, float] = (0.0, 50.0, 100.0)
+    # Friction velocities for the rough wall — DIFFERENT from smooth; tune.
+    U_TAU: tuple[float, float, float] = (0.537, 0.522, 0.506)
+    U_E: tuple[float, float, float] = (14.0, 14.0, 14.0)
+    ANALOG_LP_FILTER: tuple[int, int, int] = (2100, 4700, 14100)
+    F_CUTS: tuple[float, float, float] = (1200.0, 4000.0, 10000.0)
+    U_TAU_REL_UNC: tuple[float, float, float] = (0.2, 0.1, 0.05)
+
+    SPACINGS: tuple[str, ...] = ("close", "far")
+
+    # Bump has full NC semi-anechoic calibration data.
+    RUN_NC_CALIBS: bool = True
+    INCLUDE_NC_CALIB_RAW: bool = True
+
+    # --- TF smoothing (applied at save time; raw H also kept for diagnostics) ---
+    TF_SMOOTH_OCT: float = 1 / 6
+    TF_SMOOTH_PPO: int = 48
+
+    # --- Sampling / spectral defaults ---
+    FS: float = 50_000.0
+    NPERSEG: int = 2**12
+    WINDOW: str = "hann"
+
+    # --- Physical constants ---
+    R: float = 287.05
+    PSI_TO_PA: float = 6_894.76
+    P_ATM: float = 101_325.0
+    # delta: rough-wall boundary-layer thickness — TUNE per pressure.
+    DELTA: tuple[float, float, float] = (0.035, 0.035, 0.035)
+    TDEG: tuple[float, float, float] = (18.0, 20.0, 22.0)
+    TPLUS_CUT: float = 10.0
+
+    # Roughness-specific knobs — placeholders, fill in per the bump geometry.
+    K_S: float = 0.0       # equivalent sand-grain roughness [m]
+    BUMP_HEIGHT: float = 0.0  # nominal bump height [m]
+
+    # --- Sensor constants ---
+    SENSITIVITIES_V_PER_PA: dict[str, float] = field(
+        default_factory=lambda: {
+            "PH1": 50.9e-3,
+            "PH2": 51.7e-3,
+            "NC": 52.4e-3,
+            "nkd": 50.9e-3,
+        }
+    )
+    PREAMP_GAIN: dict[str, float] = field(
+        default_factory=lambda: {"nc": 1.0, "PH1": 1.0, "PH2": 1.0, "NC": 1.0}
+    )
+
+    # --- Derived data paths (built from ROOT_DIR) ---
+    RAW_CAL_BASE: str = field(init=False)
+    RAW_BASE: str = field(init=False)
+    TF_BASE: str = field(init=False)
+    PH_RAW_FILE: str = field(init=False)
+    PH_PROCESSED_FILE: str = field(init=False)
+    NKD_RAW_FILE: str = field(init=False)
+    NKD_PROCESSED_FILE: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        root = self.ROOT_DIR.rstrip("/")
+        object.__setattr__(self, "RAW_CAL_BASE", f"{root}/raw_calib")
+        object.__setattr__(self, "RAW_BASE", f"{root}/raw_wallp")
+        object.__setattr__(self, "TF_BASE", f"{root}/calibration")
+        object.__setattr__(self, "PH_RAW_FILE", f"{root}/pressure/G_wallp_SU_raw.hdf5")
+        object.__setattr__(self, "PH_PROCESSED_FILE", f"{root}/pressure/G_wallp_SU_production.hdf5")
+        object.__setattr__(self, "NKD_RAW_FILE", f"{root}/pressure/F_freestreamp_SU_raw.hdf5")
+        object.__setattr__(self, "NKD_PROCESSED_FILE", f"{root}/pressure/F_freestreamp_SU_production.hdf5")
