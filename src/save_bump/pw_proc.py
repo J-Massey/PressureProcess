@@ -1,13 +1,21 @@
 # Processed wall-pressure (pinhole, FRF-corrected) — bump variant.
-# Uses NC semi-anechoic calibration FRF (full NC calibs available for bump).
 #
-# Wiener noise rejection against the freestream NC reference is intentionally
-# disabled here: the NC<->PH coherence collapsed in the bump runs (and was
-# already weak in the smooth donor), so both local Wiener and the
-# smooth-donor kernel inject low-frequency phantom content rather than
-# removing facility noise. The "fs_noise_rejected_signals" group is kept for
-# backward compatibility with downstream plotting/checks and now simply holds
-# the bandpassed FRF-corrected signal.
+# Pipeline per (label, spacing, channel):
+#   raw PH -> apply phase1 H_fused (PH->NC, same TF for PH1 and PH2)
+#   -> apply bump's own NC->nkd FRF
+#   -> demean + bandpass(1 Hz, analog_LP)
+#   -> apply phase2-donor Wiener FIR kernel against bandpassed NC reference.
+#
+# Why these sources:
+#   - phase1 PH TF: bump's own PH anechoic calibrations are pinhole-degraded,
+#     and phase2's are ~15-20 dB low in the ROI; phase1's fused TF is the
+#     reference we trust.
+#   - phase2 Wiener kernel (donor): training Wiener locally on bump corrupts
+#     the wall signal because the freestream NC carries flow content from the
+#     bump dipole. The kernel from phase2 (smooth wall, clean NC reference)
+#     is purely the facility-to-wall acoustic channel and can be transplanted.
+#     Phase2 is close-only; bump's `far` spacing reuses phase2's close kernel
+#     (the kernel is approximately spacing-independent).
 from __future__ import annotations
 
 import gc
@@ -19,9 +27,15 @@ import h5py
 from scipy.signal import butter, sosfiltfilt
 
 from src.core.apply_frf import apply_frf
+from src.core.wiener_filter_torch import apply_wiener_kernel
 from src.save_bump.config_params import Config
 
 cfg = Config()
+
+# Borrowed-source paths (deliberate, not derived from cfg).
+PH_CALIB_SOURCE = Path("data/phase1/calibration/PH")
+WIENER_KERNELS_FILE = Path("data/phase2/calibration/wiener_kernels.h5")
+WIENER_KERNEL_FALLBACK_SPACING = "close"  # phase2 only has 'close'
 
 WORK_DTYPE = np.float32
 
@@ -98,30 +112,33 @@ def save_corrected_pressure(
                 if not available:
                     raise FileNotFoundError(f"No matching spacings for {L} in raw files")
 
-                with h5py.File(f"{cal_base}/PH/calibs_{int(psigs[i])}.h5", "r") as hf_cal:
-                    # Per-channel smoothed TFs (PH1 uses H1_smooth on f1;
-                    # PH2 uses H2_smooth on f2). The fused TF in this same
-                    # file is a diagnostic backup and is NOT applied here.
-                    H1_key = "H1_smooth" if "H1_smooth" in hf_cal else "H1"
-                    H2_key = "H2_smooth" if "H2_smooth" in hf_cal else "H2"
-                    f_per_channel = {
-                        "PH1": np.asarray(hf_cal["f1"][:], dtype=WORK_DTYPE),
-                        "PH2": np.asarray(hf_cal["f2"][:], dtype=WORK_DTYPE),
-                    }
-                    H_per_channel = {
-                        "PH1": np.asarray(hf_cal[H1_key][:], dtype=np.complex64),
-                        "PH2": np.asarray(hf_cal[H2_key][:], dtype=np.complex64),
-                    }
+                # PH calibration: phase1's fused TF for both PH1 and PH2.
+                ph_cal_path = PH_CALIB_SOURCE / f"calibs_{int(psigs[i])}.h5"
+                if not ph_cal_path.exists():
+                    raise FileNotFoundError(
+                        f"bump pw_proc needs phase1 PH calibration: {ph_cal_path}"
+                    )
+                with h5py.File(ph_cal_path, "r") as hf_cal:
+                    f_ph_cal = np.asarray(hf_cal["frequencies"][:], dtype=WORK_DTYPE)
+                    H_ph_cal = np.asarray(hf_cal["H_fused"][:], dtype=np.complex64)
+                f_per_channel = {"PH1": f_ph_cal, "PH2": f_ph_cal}
+                H_per_channel = {"PH1": H_ph_cal, "PH2": H_ph_cal}
 
                 nc_cal_path = Path(cal_base) / "NC" / f"calibs_{int(psigs[i])}.h5"
                 if not nc_cal_path.exists():
                     raise FileNotFoundError(
                         f"bump pipeline requires NC calibration but missing: {nc_cal_path}"
                     )
+                # Match phase1/phase2: NC->nkd FRF applied raw (H_fused).
                 with h5py.File(nc_cal_path, "r") as hf_nc:
-                    nc_key = "H_smooth" if "H_smooth" in hf_nc else "H_fused"
                     f_cal_nkd = hf_nc["frequencies"][:].squeeze().astype(WORK_DTYPE)
-                    H_fused_nkd = hf_nc[nc_key][:].squeeze().astype(np.complex64)
+                    H_fused_nkd = hf_nc["H_fused"][:].squeeze().astype(np.complex64)
+
+                # Load phase2 Wiener kernels for this pressure once per label.
+                if not WIENER_KERNELS_FILE.exists():
+                    raise FileNotFoundError(
+                        f"bump pw_proc needs phase2 Wiener kernels: {WIENER_KERNELS_FILE}"
+                    )
 
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")
@@ -158,7 +175,38 @@ def save_corrected_pressure(
                         g_rej.attrs["x_PH1"] = meta["x_PH1"]
                         g_rej.attrs["x_PH2"] = meta["x_PH2"]
 
+                    # NC reference for Wiener: bumped's own NC (production),
+                    # demeaned + bandpassed identically to the donor.
+                    nkd = np.asarray(g_nkd[f"{sp}/NC_Pa"][:], dtype=WORK_DTYPE)
+                    nkd = np.ascontiguousarray(nkd - nkd.mean(dtype=WORK_DTYPE))
+                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
+
+                    # Phase2 kernels exist for "close" only; reuse for "far".
+                    kernel_sp = sp if sp in (WIENER_KERNEL_FALLBACK_SPACING,) else WIENER_KERNEL_FALLBACK_SPACING
+                    with h5py.File(WIENER_KERNELS_FILE, "r") as hf_k:
+                        g_k_label = hf_k.get(L)
+                        if g_k_label is None or kernel_sp not in g_k_label:
+                            raise FileNotFoundError(
+                                f"missing phase2 kernel for {L}/{kernel_sp}"
+                            )
+                        c_per_channel = {
+                            ch: np.asarray(g_k_label[f"{kernel_sp}/{ch}_Pa/c"][:],
+                                           dtype=WORK_DTYPE)
+                            for ch in ("PH1", "PH2")
+                            if f"{kernel_sp}/{ch}_Pa" in g_k_label
+                        }
+
                     for channel in ("PH1", "PH2"):
+                        # Per-position friction velocity (and Re_tau derived
+                        # from it via the per-pressure delta + nu). Fall back
+                        # to the per-pressure u_tau if the position is missing
+                        # from the config dict.
+                        try:
+                            u_tau_pos = float(cfg.U_TAU_BY_POSITION[L][sp][channel])
+                        except KeyError:
+                            u_tau_pos = float(u_tau[i])
+                        re_tau_pos = u_tau_pos * delta_i / nu
+
                         signal = np.asarray(g_raw[f"{sp}/{channel}_Pa"][:], dtype=WORK_DTYPE)
                         signal = apply_frf(
                             signal, FS,
@@ -167,14 +215,32 @@ def save_corrected_pressure(
                         )
                         signal = apply_frf(signal, FS, f_cal_nkd, H_fused_nkd, dtype=WORK_DTYPE)
                         signal = np.ascontiguousarray(signal)
-                        g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
+                        d_corr = g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
+                        d_corr.attrs["u_tau"] = u_tau_pos
+                        d_corr.attrs["Re_tau"] = re_tau_pos
 
                         signal = np.ascontiguousarray(signal - signal.mean(dtype=WORK_DTYPE))
                         signal = bandpass_filter(signal, FS, 1, analog_LP_filter[i])
-                        g_rej.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
 
-                        del signal
+                        if channel in c_per_channel:
+                            clean = apply_wiener_kernel(
+                                signal, nkd, c_per_channel[channel],
+                                alpha=1.0, preserve_mean=False,
+                            )
+                            clean = np.ascontiguousarray(clean, dtype=WORK_DTYPE)
+                        else:
+                            print(f"[warn] no phase2 kernel for {L}/{kernel_sp}/{channel}; "
+                                  f"falling through with bandpassed signal")
+                            clean = signal
+                        d_rej = g_rej.create_dataset(f"{channel}_Pa", data=clean, dtype="f4")
+                        d_rej.attrs["u_tau"] = u_tau_pos
+                        d_rej.attrs["Re_tau"] = re_tau_pos
+
+                        del signal, clean
                         gc.collect()
+
+                    del nkd
+                    gc.collect()
 
 
 if __name__ == "__main__":

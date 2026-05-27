@@ -32,6 +32,25 @@ class Config:
 
     SPACINGS: tuple[str, ...] = ("close", "far")
 
+    # Per-sensor-position friction velocity [m/s], indexed as
+    # U_TAU_BY_POSITION[label][spacing][channel]. Mapping mirrors
+    # plot_bump/raw.py's P1..P4 legend:
+    #   P1 = (close, PH1)   P2 = (close, PH2)
+    #   P3 = (far,   PH1)   P4 = (far,   PH2)
+    U_TAU_BY_POSITION: dict[str, dict[str, dict[str, float]]] = field(
+        default_factory=lambda: {
+            # ATM (0 psig): P1=0.5414, P2=0.5818, P3=0.5949, P4=0.5752
+            "0psig":   {"close": {"PH1": 0.5414, "PH2": 0.5818},
+                         "far":   {"PH1": 0.5949, "PH2": 0.5752}},
+            # 50 psig:    P1=0.4836, P2=0.5615, P3=0.5221, P4=0.4986
+            "50psig":  {"close": {"PH1": 0.4836, "PH2": 0.5615},
+                         "far":   {"PH1": 0.5221, "PH2": 0.4986}},
+            # 100 psig:   P1=0.4854, P2=0.5232, P3=0.4831, P4=0.4858
+            "100psig": {"close": {"PH1": 0.4854, "PH2": 0.5232},
+                         "far":   {"PH1": 0.4831, "PH2": 0.4858}},
+        }
+    )
+
     # Bump has full NC semi-anechoic calibration data.
     RUN_NC_CALIBS: bool = True
     INCLUDE_NC_CALIB_RAW: bool = True

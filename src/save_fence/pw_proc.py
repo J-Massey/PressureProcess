@@ -1,11 +1,16 @@
 # Processed wall-pressure (pinhole, FRF-corrected) — fence variant.
-# Uses NC semi-anechoic calibration FRF.
 #
-# Wiener noise rejection against the freestream NC reference is intentionally
-# disabled here (see save_bump/pw_proc.py for the rationale). The
-# "fs_noise_rejected_signals" group is retained for backward compatibility
-# with downstream plotting/checks and holds the bandpassed FRF-corrected
-# signal.
+# Pipeline per (label, spacing, channel):
+#   raw PH -> apply phase1 H_fused (PH->NC, same TF for PH1 and PH2)
+#   -> apply fence's own NC->nkd FRF (raw H_fused)
+#   -> demean + bandpass(1 Hz, analog_LP)
+#   -> apply phase2-donor Wiener FIR kernel against bandpassed NC reference.
+#
+# Borrowed sources mirror save_bump:
+#   - PH TF: phase1's fused H_fused (fence PH calibs are not used in pw_proc)
+#   - Wiener kernel: phase2-donor; fence's SPACINGS=("combined",), so the
+#     phase2 'close' kernel is reused for fence's 'combined' (facility-noise
+#     transfer function is approximately spacing-independent).
 from __future__ import annotations
 
 import gc
@@ -17,9 +22,17 @@ import h5py
 from scipy.signal import butter, sosfiltfilt
 
 from src.core.apply_frf import apply_frf
+from src.core.wiener_filter_torch import apply_wiener_kernel
 from src.save_fence.config_params import Config
 
 cfg = Config()
+
+# Borrowed-source paths (deliberate, not derived from cfg).
+PH_CALIB_SOURCE = Path("data/phase1/calibration/PH")
+WIENER_KERNELS_FILE = Path("data/phase2/calibration/wiener_kernels.h5")
+# Phase2 kernels live under 'close'; reuse for whatever fence calls its
+# spacing (currently "combined").
+WIENER_KERNEL_FALLBACK_SPACING = "close"
 
 WORK_DTYPE = np.float32
 
@@ -106,18 +119,17 @@ def save_corrected_pressure(
                 if not available:
                     raise FileNotFoundError(f"No matching spacings for {L} in raw files")
 
-                with h5py.File(f"{cal_base}/PH/calibs_{int(psigs[i])}.h5", "r") as hf_cal:
-                    # Per-channel TFs (PH1 uses H1 on f1; PH2 uses H2 on f2).
-                    # The fused TF in this same file is a diagnostic backup
-                    # and is NOT applied in this fence pipeline.
-                    f_per_channel = {
-                        "PH1": np.asarray(hf_cal["f1"][:], dtype=WORK_DTYPE),
-                        "PH2": np.asarray(hf_cal["f2"][:], dtype=WORK_DTYPE),
-                    }
-                    H_per_channel = {
-                        "PH1": np.asarray(hf_cal["H1"][:], dtype=np.complex64),
-                        "PH2": np.asarray(hf_cal["H2"][:], dtype=np.complex64),
-                    }
+                # PH calibration: phase1's fused TF for both PH1 and PH2.
+                ph_cal_path = PH_CALIB_SOURCE / f"calibs_{int(psigs[i])}.h5"
+                if not ph_cal_path.exists():
+                    raise FileNotFoundError(
+                        f"fence pw_proc needs phase1 PH calibration: {ph_cal_path}"
+                    )
+                with h5py.File(ph_cal_path, "r") as hf_cal:
+                    f_ph_cal = np.asarray(hf_cal["frequencies"][:], dtype=WORK_DTYPE)
+                    H_ph_cal = np.asarray(hf_cal["H_fused"][:], dtype=np.complex64)
+                f_per_channel = {"PH1": f_ph_cal, "PH2": f_ph_cal}
+                H_per_channel = {"PH1": H_ph_cal, "PH2": H_ph_cal}
 
                 nc_cal_path = Path(cal_base) / "NC" / f"calibs_{int(psigs[i])}.h5"
                 if not nc_cal_path.exists():
