@@ -290,8 +290,156 @@ def plot_stages_3panel(
         print(f"[ok] {out}")
 
 
+def _local_delta(L: str, sp: str, channel: str) -> float:
+    """Look up local BL thickness for (label, spacing, channel) from
+    cfg.DELTA_BY_POSITION, falling back to the per-pressure cfg.DELTA."""
+    try:
+        return float(cfg.DELTA_BY_POSITION[L][sp][channel])
+    except (KeyError, AttributeError):
+        idx = cfg.LABELS.index(L) if L in cfg.LABELS else 0
+        return float(cfg.DELTA[idx])
+
+
+def _plot_stages_outer(
+    *,
+    length_scale: str,  # "bump_h" or "local_delta"
+    out_name: str,
+    smooth_span_oct: float,
+    smooth_ppo: int,
+    title_suffix: str,
+) -> None:
+    """Common backbone for the bump-height and local-delta normalised plots.
+    Both use the outer dimensionless form
+
+        x = f * L / U_e       (Strouhal, log x)
+        y = f * phi_pp / (rho^2 * U_e^4)    (pre-multiplied, linear y)
+
+    with L = cfg.BUMP_HEIGHT for "bump_h" and L =
+    DELTA_BY_POSITION[label][spacing][channel] for "local_delta". Only the
+    Wiener-rejected (smoothed) stage is drawn -- four position colours per
+    panel.
+    """
+    xlim = (5e-2, 2e1)
+    ylim = (0.0, 5e-5)
+
+    with h5py.File(cfg.PH_PROCESSED_FILE, "r") as hf_prod:
+        g_prod_root = hf_prod["wallp_production"]
+        labels = [L for L in cfg.LABELS if L in g_prod_root]
+        if not labels:
+            print("[skip] no labels in wallp_production")
+            return
+
+        fig, axes = plt.subplots(
+            1, len(labels),
+            figsize=(3.6 * len(labels), 3.2),
+            sharey=True, tight_layout=True, squeeze=False,
+        )
+        axes = axes[0]
+
+        for i, L in enumerate(labels):
+            ax = axes[i]
+            gL_prod = g_prod_root[L]
+            g_rej = gL_prod.get("fs_noise_rejected_signals")
+            if g_rej is None:
+                ax.set_visible(False)
+                continue
+
+            Ue = _get_ue(hf_prod, gL_prod, i)
+            rho = float(np.atleast_1d(gL_prod.attrs["rho"])[0])
+
+            for sp, ch, _lbl, col in POSITION_TRACES:
+                if sp not in g_rej or ch not in g_rej[sp]:
+                    continue
+                channel_short = ch.split("_")[0]
+                if length_scale == "bump_h":
+                    L_len = float(cfg.BUMP_HEIGHT)
+                elif length_scale == "local_delta":
+                    L_len = _local_delta(L, sp, channel_short)
+                else:
+                    raise ValueError(f"unknown length_scale: {length_scale}")
+                if L_len <= 0.0:
+                    continue
+
+                f_raw, p_raw = _spec(g_rej[f"{sp}/{ch}"][:])
+                f_s, p_s = _smooth_psd_logf(
+                    f_raw, p_raw,
+                    span_oct=smooth_span_oct, ppo=smooth_ppo,
+                )
+                m = (f_s > F_CUTL) & (f_s < F_CUTH)
+                if not np.any(m):
+                    continue
+                X = f_s[m] * L_len / Ue
+                Y = (f_s[m] * p_s[m]) / (rho ** 2 * Ue ** 4)
+                ax.semilogx(X, Y, color=col, lw=1.4)
+
+            ax.set_title(f"bump {L}")
+            ax.set_xlabel(rf"$f \, {title_suffix} / U_e$")
+            if i == 0:
+                ax.set_ylabel(r"$f \phi_{pp} / (\rho^2 U_e^4)$")
+            ax.set_xlim(*xlim)
+            ax.set_ylim(*ylim)
+            ax.grid(True, which="both", linestyle="--", linewidth=0.4, alpha=0.7)
+
+        pos_lines = [Line2D([0], [0], color=col, linestyle="-", lw=1.4)
+                     for _, _, _lbl, col in POSITION_TRACES]
+        pos_labels = [lbl for _, _, lbl, _ in POSITION_TRACES]
+        axes[-1].legend(pos_lines, pos_labels, loc="upper right",
+                        fontsize=7, title="position", title_fontsize=7)
+
+        out = FIG_DIR / out_name
+        fig.savefig(out, dpi=600)
+        plt.close(fig)
+        print(f"[ok] {out}")
+
+
+def plot_stages_3panel_bumpscale(
+    *,
+    smooth_span_oct: float = 1 / 2,
+    smooth_ppo: int = 96,
+) -> None:
+    """Bump-height + free-stream normalisation:
+
+        x = f * h / U_e       (Strouhal based on bump height h = cfg.BUMP_HEIGHT)
+        y = f * phi_pp / (rho^2 * U_e^4)    (pre-multiplied dimensionless)
+
+    Same 3-panel + 4-position + 3-stage layout as plot_stages_3panel, on
+    log-log axes. Models are not drawn (they assume canonical inner scaling).
+    """
+    _plot_stages_outer(
+        length_scale="bump_h",
+        out_name="G_wallp_SU_production_stages_bumpscale.png",
+        smooth_span_oct=smooth_span_oct,
+        smooth_ppo=smooth_ppo,
+        title_suffix="h",
+    )
+
+
+def plot_stages_3panel_deltascale(
+    *,
+    smooth_span_oct: float = 1 / 2,
+    smooth_ppo: int = 96,
+) -> None:
+    """Local-BL-thickness + free-stream normalisation:
+
+        x = f * delta_local / U_e   (Strouhal with per-position delta)
+        y = f * phi_pp / (rho^2 * U_e^4)    (pre-multiplied dimensionless)
+
+    delta_local is looked up per (label, spacing, channel) from
+    cfg.DELTA_BY_POSITION. Layout matches plot_stages_3panel_bumpscale.
+    """
+    _plot_stages_outer(
+        length_scale="local_delta",
+        out_name="G_wallp_SU_production_stages_deltascale.png",
+        smooth_span_oct=smooth_span_oct,
+        smooth_ppo=smooth_ppo,
+        title_suffix=r"\delta_{\mathrm{loc}}",
+    )
+
+
 def plot_all() -> None:
     plot_stages_3panel()
+    plot_stages_3panel_bumpscale()
+    plot_stages_3panel_deltascale()
 
 
 def plot_cleaned_by_case() -> None:

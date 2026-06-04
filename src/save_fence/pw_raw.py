@@ -1,9 +1,6 @@
 # Wall-pressure raw (pinhole) — fence variant.
-#
-# NOTE: fence delivers wall-pressure as a single combined MAT file
-# (cfg.ATM_PATH). The ingest scaffold below mirrors the bump version but the
-# PH1/PH2 channel pull from the combined file needs to be filled in once the
-# ATM_Rev1.mat layout is known.
+# Pipeline-equivalent to save_bump.pw_raw; only the Config source and the
+# case-specific group attrs differ.
 import os
 from pathlib import Path
 
@@ -43,37 +40,6 @@ def air_props_from_gauge(psi_gauge: float, T_K: float):
     return rho, mu, nu
 
 
-def _load_atm_combined() -> dict:
-    atm_path = Path(cfg.ATM_PATH)
-    if not atm_path.exists():
-        raise FileNotFoundError(f"fence ATM file missing: {atm_path}")
-    return sio.loadmat(atm_path)
-
-
-def _per_pressure_mat_path(label: str) -> Path:
-    """<RAW_BASE>/combined/<label>.mat for non-atmospheric runs (when they land)."""
-    return Path(cfg.RAW_BASE) / "combined" / f"{label}.mat"
-
-
-def _extract_PH_for_pressure(atm: dict, label: str, psig: float):
-    """
-    Return (ph1_v, ph2_v) volts for one pressure, or (None, None) if missing.
-
-    psig == 0 reads ATM_Rev1.mat. Other pressures look for a per-pressure
-    file with the same 4-column layout as ATM_Rev1.mat.
-    """
-    cols = cfg.ATM_CHANNEL_COLUMNS
-    if float(psig) == 0.0:
-        cd = np.asarray(atm["channelData"])
-        return cd[:, cols["PH1"]].astype(float), cd[:, cols["PH2"]].astype(float)
-    mat_path = _per_pressure_mat_path(label)
-    if not mat_path.exists():
-        return None, None
-    mat = sio.loadmat(mat_path)
-    cd = np.asarray(mat["channelData"])
-    return cd[:, cols["PH1"]].astype(float), cd[:, cols["PH2"]].astype(float)
-
-
 def save_raw_ph_pressure(
     *,
     spacings: tuple[str, ...] | None = None,
@@ -90,36 +56,27 @@ def save_raw_ph_pressure(
 
     cal_base = Path(cfg.RAW_CAL_BASE) / "PH"
     os.makedirs(cal_base, exist_ok=True)
+    os.makedirs(Path(cfg.RAW_BASE), exist_ok=True)
 
     ph_raw = cfg.PH_RAW_FILE
     os.makedirs(Path(ph_raw).parent, exist_ok=True)
 
-    atm = _load_atm_combined()
-
     with h5py.File(ph_raw, "w") as hf:
-        hf.attrs["title"] = "Wall-pressure (pin-hole) - raw \& calibration [fence]"
+        hf.attrs["title"] = "Wall-pressure (pin-hole) - raw & calibration [fence]"
         hf.attrs["fs_Hz"] = FS
         hf.attrs["Ue_m_per_s"] = np.asarray(Ue, float)
         hf.attrs["DAQ"] = "24-bit NI-USB-6363"
         hf.attrs["mic_details"] = "HB&K 1/2'' Type 4964"
         hf.attrs["case"] = cfg.CASE
-        hf.attrs["atm_file"] = cfg.ATM_FILE
         hf.attrs["description"] = (
-            "Raw wall-pressure signals (fence). psig=0 from ATM_Rev1.mat; "
-            "non-atmospheric pressures expect <RAW_BASE>/combined/<label>.mat "
-            "with the same 4-column layout. Includes PH<->NC semi-anechoic "
+            "Raw wall-pressure signals (fence). Pressures (0, 50, 100) psig "
+            "with close+far pinhole spacings. Includes PH<->NC semi-anechoic "
             "calibration."
         )
 
         g_fs = hf.create_group("wallp_raw")
 
-        seen_any = False
         for i, L in enumerate(labels):
-            ph1_v, ph2_v = _extract_PH_for_pressure(atm, L, psigs[i])
-            if ph1_v is None:
-                print(f"[skip] fence {L}: no per-pressure wall-pressure file yet")
-                continue
-
             gL = g_fs.create_group(L)
             rho, mu, nu = air_props_from_gauge(psigs[i], Tk[i])
             delta_i = float(cfg.DELTA[i])
@@ -142,35 +99,57 @@ def save_raw_ph_pressure(
                 "mu: Pa*s", "T_K: K", "analog_LP_filter_Hz: Hz",
             ]
 
-            ph1 = correct_pressure_sensitivity(volts_to_pa(ph1_v, "PH1"), psigs[i])
-            ph2 = correct_pressure_sensitivity(volts_to_pa(ph2_v, "PH2"), psigs[i])
-
+            spacing_meta = {
+                "close": {
+                    "spacing_m": 2.8 * delta_i,
+                    "x_PH1": 15e-3 + 0.2 * delta_i,
+                    "x_PH2": 15e-3 + 0.2 * delta_i + 2.8 * delta_i,
+                },
+                "far": {
+                    "spacing_m": 3.2 * delta_i,
+                    "x_PH2": 15e-3,
+                    "x_PH1": 15e-3 + 3.2 * delta_i,
+                },
+            }
+            seen_any = False
             for sp in spacings:
+                mat_path = Path(cfg.RAW_BASE) / f"{sp}/{L}.mat"
+                if not mat_path.exists():
+                    print(f"[skip] missing raw mat file: {mat_path}")
+                    continue
+                dat = sio.loadmat(mat_path)
+                X = np.asarray(dat["channelData"])
+                ph1_v = X[:, 0]
+                ph2_v = X[:, 1]
+
+                ph1 = correct_pressure_sensitivity(volts_to_pa(ph1_v, "PH1"), psigs[i])
+                ph2 = correct_pressure_sensitivity(volts_to_pa(ph2_v, "PH2"), psigs[i])
+
                 gS = gL.create_group(sp)
+                meta = spacing_meta.get(sp)
+                if meta:
+                    gS.attrs["spacing_m"] = meta["spacing_m"]
+                    gS.attrs["x_PH1"] = meta["x_PH1"]
+                    gS.attrs["x_PH2"] = meta["x_PH2"]
                 gS.create_dataset("PH1_Pa", data=ph1)
                 gS.create_dataset("PH2_Pa", data=ph2)
-            seen_any = True
+                seen_any = True
+            if not seen_any:
+                raise FileNotFoundError(f"No raw files found for {L} in {cfg.RAW_BASE}")
 
-            # PH<->NC semi-anechoic calibration — same shape as bump/iso_re.
-            m1_path = cal_base / f"calib_{L}_1.mat"
-            m2_path = cal_base / f"calib_{L}_2.mat"
-            if not (m1_path.exists() and m2_path.exists()):
-                print(f"[skip] missing PH calibration for {L} at {cal_base}")
-                continue
-
-            m1 = sio.loadmat(m1_path)
-            ph1_v_cal, _, nc_v, *_ = _extract_channel_data(m1).T
-            ph1_pa = correct_pressure_sensitivity(volts_to_pa(ph1_v_cal, "PH1"), psigs[i])
+            m1 = sio.loadmat(cal_base / f"calib_{L}_1.mat")
+            ph1_v, _, nc_v, *_ = _extract_channel_data(m1).T
+            ph1_pa = correct_pressure_sensitivity(volts_to_pa(ph1_v, "PH1"), psigs[i])
             nc1_pa = correct_pressure_sensitivity(volts_to_pa(nc_v, "NC"), psigs[i])
 
-            m2 = sio.loadmat(m2_path)
-            _, ph2_v_cal, nc_v2, *_ = _extract_channel_data(m2).T
-            ph2_pa = correct_pressure_sensitivity(volts_to_pa(ph2_v_cal, "PH2"), psigs[i])
+            m2 = sio.loadmat(cal_base / f"calib_{L}_2.mat")
+            _, ph2_v, nc_v2, *_ = _extract_channel_data(m2).T
+            ph2_pa = correct_pressure_sensitivity(volts_to_pa(ph2_v, "PH2"), psigs[i])
             nc2_pa = correct_pressure_sensitivity(volts_to_pa(nc_v2, "NC"), psigs[i])
 
             gFRF = gL.create_group("FRF_PH_to_NC")
-            gFRF.attrs["from"] = "NC"
-            gFRF.attrs["to"] = "nkd"
+            gFRF.attrs["from"] = "PH"
+            gFRF.attrs["to"] = "NC"
             gFRF.attrs["note"] = "Semi-anechoic calibration mapping the pinhole mic to nosecone mic"
             gR1 = gFRF.create_group("Run1")
             gR1.create_dataset("PH1_Pa", data=ph1_pa)
@@ -178,11 +157,6 @@ def save_raw_ph_pressure(
             gR2 = gFRF.create_group("Run2")
             gR2.create_dataset("PH2_Pa", data=ph2_pa)
             gR2.create_dataset("NC_Pa", data=nc2_pa)
-
-        if not seen_any:
-            raise FileNotFoundError(
-                "fence wall-pressure ingest found no readable data — check ATM_Rev1.mat path"
-            )
 
 
 if __name__ == "__main__":

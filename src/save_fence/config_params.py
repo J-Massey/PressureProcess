@@ -36,19 +36,22 @@ class Config:
     F_CUTS: tuple[float, float, float] = (1200.0, 4000.0, 10000.0)
     U_TAU_REL_UNC: tuple[float, float, float] = (0.2, 0.1, 0.05)
 
-    # fence delivers one combined wall-pressure file rather than per-spacing.
-    SPACINGS: tuple[str, ...] = ("combined",)
+    # Fence data layout now matches bump: raw_wallp/{close,far}/<label>.mat.
+    SPACINGS: tuple[str, ...] = ("close", "far")
 
     # Per-sensor-position friction velocity [m/s], indexed as
-    # U_TAU_BY_POSITION[label][spacing][channel] -- mirrors save_bump.
-    # Fence has SPACINGS=("combined",), so the position legend in plots is
-    # P1=(combined, PH1), P2=(combined, PH2). Defaults seeded with the
-    # per-pressure U_TAU value; fill in real per-position values when known.
+    # U_TAU_BY_POSITION[label][spacing][channel] -- mirrors save_bump's
+    # 4-position layout (P1..P4 = close PH1, close PH2, far PH1, far PH2).
+    # Defaults seeded with the per-pressure U_TAU value; replace with real
+    # per-position values when known.
     U_TAU_BY_POSITION: dict[str, dict[str, dict[str, float]]] = field(
         default_factory=lambda: {
-            "0psig":   {"combined": {"PH1": 0.537, "PH2": 0.537}},
-            "50psig":  {"combined": {"PH1": 0.522, "PH2": 0.522}},
-            "100psig": {"combined": {"PH1": 0.506, "PH2": 0.506}},
+            "0psig":   {"close": {"PH1": 0.537, "PH2": 0.537},
+                         "far":   {"PH1": 0.537, "PH2": 0.537}},
+            "50psig":  {"close": {"PH1": 0.522, "PH2": 0.522},
+                         "far":   {"PH1": 0.522, "PH2": 0.522}},
+            "100psig": {"close": {"PH1": 0.506, "PH2": 0.506},
+                         "far":   {"PH1": 0.506, "PH2": 0.506}},
         }
     )
 

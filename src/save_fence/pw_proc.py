@@ -30,9 +30,30 @@ cfg = Config()
 # Borrowed-source paths (deliberate, not derived from cfg).
 PH_CALIB_SOURCE = Path("data/phase1/calibration/PH")
 WIENER_KERNELS_FILE = Path("data/phase2/calibration/wiener_kernels.h5")
-# Phase2 kernels live under 'close'; reuse for whatever fence calls its
-# spacing (currently "combined").
+# Phase2 only has 'close' kernels; fence's 'far' falls back to it.
 WIENER_KERNEL_FALLBACK_SPACING = "close"
+
+# Shear-side production HDF5 -- per-position friction velocities measured on
+# the fence rig. Path matches the user's MATLAB convention:
+#   h5read('A_B1_shear_SU_production.hdf5', '/Production/<label>/<P>/u_tau')
+SHEAR_FILE = Path("data/fence/A_B1_shear_SU_production.hdf5")
+_SHEAR_LABEL_MAP = {"0psig": "ATM", "50psig": "50_psig", "100psig": "100_psig"}
+_SHEAR_POSITION_MAP = {
+    ("close", "PH1"): "P1",
+    ("close", "PH2"): "P2",
+    ("far",   "PH1"): "P3",
+    ("far",   "PH2"): "P4",
+}
+
+
+def _shear_u_tau(label: str, spacing: str, channel: str) -> float:
+    """Look up u_tau from the shear production HDF5 for (label, spacing,
+    channel). Raises KeyError if the (label, spacing, channel) tuple is not
+    one of the known fence positions."""
+    shear_label = _SHEAR_LABEL_MAP[label]
+    pos = _SHEAR_POSITION_MAP[(spacing, channel)]
+    with h5py.File(SHEAR_FILE, "r") as hf:
+        return float(np.asarray(hf[f"/Production/{shear_label}/{pos}/u_tau"][:]).ravel()[0])
 
 WORK_DTYPE = np.float32
 
@@ -140,6 +161,11 @@ def save_corrected_pressure(
                     f_cal_nkd = hf_nc["frequencies"][:].squeeze().astype(WORK_DTYPE)
                     H_fused_nkd = hf_nc["H_fused"][:].squeeze().astype(np.complex64)
 
+                if not WIENER_KERNELS_FILE.exists():
+                    raise FileNotFoundError(
+                        f"fence pw_proc needs phase2 Wiener kernels: {WIENER_KERNELS_FILE}"
+                    )
+
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")
 
@@ -153,7 +179,41 @@ def save_corrected_pressure(
                     g_corr = g_corrected.create_group(sp)
                     g_rej = g_rejected.create_group(sp)
 
+                    # NC reference for Wiener: fence's own NC (production),
+                    # demeaned + bandpassed identically to the donor.
+                    nkd = np.asarray(g_nkd[f"{sp}/NC_Pa"][:], dtype=WORK_DTYPE)
+                    nkd = np.ascontiguousarray(nkd - nkd.mean(dtype=WORK_DTYPE))
+                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
+
+                    # Phase2 kernels live under 'close'; if fence requests
+                    # 'far' (or any other spacing), fall back to 'close'.
+                    kernel_sp = sp if sp in (WIENER_KERNEL_FALLBACK_SPACING,) else WIENER_KERNEL_FALLBACK_SPACING
+                    with h5py.File(WIENER_KERNELS_FILE, "r") as hf_k:
+                        g_k_label = hf_k.get(L)
+                        if g_k_label is None or kernel_sp not in g_k_label:
+                            raise FileNotFoundError(
+                                f"missing phase2 kernel for {L}/{kernel_sp}"
+                            )
+                        c_per_channel = {
+                            ch: np.asarray(g_k_label[f"{kernel_sp}/{ch}_Pa/c"][:],
+                                           dtype=WORK_DTYPE)
+                            for ch in ("PH1", "PH2")
+                            if f"{kernel_sp}/{ch}_Pa" in g_k_label
+                        }
+
                     for channel in ("PH1", "PH2"):
+                        # Per-position u_tau: prefer the shear-side production
+                        # HDF5 (A_B1_shear_SU_production.hdf5), then fall back
+                        # to the config dict, then to the per-pressure scalar.
+                        try:
+                            u_tau_pos = _shear_u_tau(L, sp, channel)
+                        except (KeyError, FileNotFoundError, OSError):
+                            try:
+                                u_tau_pos = float(cfg.U_TAU_BY_POSITION[L][sp][channel])
+                            except KeyError:
+                                u_tau_pos = float(u_tau[i])
+                        re_tau_pos = u_tau_pos * delta_i / nu
+
                         signal = np.asarray(g_raw[f"{sp}/{channel}_Pa"][:], dtype=WORK_DTYPE)
                         signal = apply_frf(
                             signal, FS,
@@ -162,14 +222,32 @@ def save_corrected_pressure(
                         )
                         signal = apply_frf(signal, FS, f_cal_nkd, H_fused_nkd, dtype=WORK_DTYPE)
                         signal = np.ascontiguousarray(signal)
-                        g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
+                        d_corr = g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
+                        d_corr.attrs["u_tau"] = u_tau_pos
+                        d_corr.attrs["Re_tau"] = re_tau_pos
 
                         signal = np.ascontiguousarray(signal - signal.mean(dtype=WORK_DTYPE))
                         signal = bandpass_filter(signal, FS, 1, analog_LP_filter[i])
-                        g_rej.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
 
-                        del signal
+                        if channel in c_per_channel:
+                            clean = apply_wiener_kernel(
+                                signal, nkd, c_per_channel[channel],
+                                alpha=1.0, preserve_mean=False,
+                            )
+                            clean = np.ascontiguousarray(clean, dtype=WORK_DTYPE)
+                        else:
+                            print(f"[warn] no phase2 kernel for {L}/{kernel_sp}/{channel}; "
+                                  f"falling through with bandpassed signal")
+                            clean = signal
+                        d_rej = g_rej.create_dataset(f"{channel}_Pa", data=clean, dtype="f4")
+                        d_rej.attrs["u_tau"] = u_tau_pos
+                        d_rej.attrs["Re_tau"] = re_tau_pos
+
+                        del signal, clean
                         gc.collect()
+
+                    del nkd
+                    gc.collect()
 
 
 if __name__ == "__main__":

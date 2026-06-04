@@ -73,9 +73,26 @@ class Config:
     TDEG: tuple[float, float, float] = (18.0, 20.0, 22.0)
     TPLUS_CUT: float = 10.0
 
-    # Roughness-specific knobs — placeholders, fill in per the bump geometry.
-    K_S: float = 0.0       # equivalent sand-grain roughness [m]
-    BUMP_HEIGHT: float = 0.0  # nominal bump height [m]
+    # Roughness-specific knobs.
+    K_S: float = 0.0           # equivalent sand-grain roughness [m]
+    BUMP_HEIGHT: float = 20.01e-3  # nominal bump height [m] (20.01 mm)
+
+    # Per-sensor-position local BL thickness [m], indexed as
+    # DELTA_BY_POSITION[label][spacing][channel]. Same P1..P4 mapping as
+    # U_TAU_BY_POSITION (P1=close PH1, P2=close PH2, P3=far PH1, P4=far PH2).
+    DELTA_BY_POSITION: dict[str, dict[str, dict[str, float]]] = field(
+        default_factory=lambda: {
+            # 0 psig: P1=56.98 mm, P2=51.60, P3=42.73, P4=43.32
+            "0psig":   {"close": {"PH1": 56.98e-3, "PH2": 51.60e-3},
+                         "far":   {"PH1": 42.73e-3, "PH2": 43.32e-3}},
+            # 50 psig: P1=55.76, P2=42.63, P3=38.82, P4=39.36
+            "50psig":  {"close": {"PH1": 55.76e-3, "PH2": 42.63e-3},
+                         "far":   {"PH1": 38.82e-3, "PH2": 39.36e-3}},
+            # 100 psig: P1=44.51, P2=42.07, P3=38.50, P4=39.06
+            "100psig": {"close": {"PH1": 44.51e-3, "PH2": 42.07e-3},
+                         "far":   {"PH1": 38.50e-3, "PH2": 39.06e-3}},
+        }
+    )
 
     # --- Sensor constants ---
     SENSITIVITIES_V_PER_PA: dict[str, float] = field(
