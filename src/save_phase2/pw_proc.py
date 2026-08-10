@@ -2,8 +2,10 @@
 #
 # Pipeline per (label, spacing, channel):
 #   raw PH -> apply phase1 H_fused (PH->NC) -> NC reference
-#   -> apply NC->nkd FRF (from phase2 NC calibs) -> demean + bandpass(1 Hz, analog_LP)
-#   -> Wiener noise rejection against the freestream NC (production) reference.
+#   -> apply NC->nkd FRF (from phase2 NC calibs) -> demean -> Wiener noise
+#   rejection against the demeaned freestream NC (production) reference.
+#   No digital band filtering; band limits (f_cut_Hz) are applied only as
+#   spectral masks at reporting time.
 #
 # PH calibration source: phase1's data/phase1/calibration/PH/calibs_{psig}.h5
 # applied to BOTH PH1 and PH2 (same fused TF). Phase2's own PH calibration
@@ -19,7 +21,6 @@ from pathlib import Path
 
 import numpy as np
 import h5py
-from scipy.signal import butter, sosfiltfilt
 
 from src.core.apply_frf import apply_frf
 from src.core.wiener_filter_torch import wiener_cancel_background, wiener_cancel_hybrid
@@ -146,12 +147,6 @@ def save_corrected_pressure(
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")
 
-                def bandpass_filter(data, fs, f_low, f_high, order=3):
-                    sos = butter(order, [f_low, f_high], btype="band", fs=fs, output="sos")
-                    filtered = sosfiltfilt(sos, data)
-                    filtered = np.nan_to_num(filtered, nan=0.0, copy=False)
-                    return np.ascontiguousarray(filtered, dtype=WORK_DTYPE)
-
                 for sp in available:
                     spacing_meta = {
                         "close": {
@@ -179,10 +174,10 @@ def save_corrected_pressure(
                         g_rej.attrs["x_PH2"] = meta["x_PH2"]
 
                     # Freestream NC (production) reference for the Wiener
-                    # canceller, demeaned + bandpassed to match the PH path.
+                    # canceller, demeaned to match the PH path (band limits are
+                    # applied only as spectral masks at reporting time).
                     nkd = np.asarray(g_nkd[f"{sp}/NC_Pa"][:], dtype=WORK_DTYPE)
                     nkd = np.ascontiguousarray(nkd - nkd.mean(dtype=WORK_DTYPE))
-                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
 
                     for channel in ("PH1", "PH2"):
                         signal = np.asarray(g_raw[f"{sp}/{channel}_Pa"][:], dtype=WORK_DTYPE)
@@ -196,7 +191,6 @@ def save_corrected_pressure(
                         g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
 
                         signal = np.ascontiguousarray(signal - signal.mean(dtype=WORK_DTYPE))
-                        signal = bandpass_filter(signal, FS, 1, analog_LP_filter[i])
                         clean = _cancel_noise(signal, nkd, FS)
                         g_rej.create_dataset(f"{channel}_Pa", data=clean, dtype="f4")
 

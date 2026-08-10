@@ -1,8 +1,10 @@
 /data
-/data_arXiv
+/report/data
 /.env
 .npy
 .zip
 *.npy
 *.zip
 # *.png
+/.claude/
+*cpython*

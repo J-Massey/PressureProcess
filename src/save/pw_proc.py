@@ -7,7 +7,6 @@ import sys
 
 import numpy as np
 import h5py
-from scipy.signal import butter, sosfiltfilt
 
 from pathlib import Path
 
@@ -171,12 +170,6 @@ def save_corrected_pressure(
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")
 
-                def bandpass_filter(data, fs, f_low, f_high, order=3):
-                    sos = butter(order, [f_low, f_high], btype="band", fs=fs, output="sos")
-                    filtered = sosfiltfilt(sos, data)
-                    filtered = np.nan_to_num(filtered, nan=0.0, copy=False)
-                    return np.ascontiguousarray(filtered, dtype=WORK_DTYPE)
-
                 for sp in available:
                     spacing_meta = {
                         "close": {
@@ -205,7 +198,6 @@ def save_corrected_pressure(
 
                     nkd = np.asarray(g_nkd[f"{sp}/NC_Pa"][:], dtype=WORK_DTYPE)
                     nkd = np.ascontiguousarray(nkd - nkd.mean(dtype=WORK_DTYPE))
-                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
 
                     for channel in ("PH1", "PH2"):
                         signal = np.asarray(g_raw[f"{sp}/{channel}_Pa"][:], dtype=WORK_DTYPE)
@@ -215,7 +207,6 @@ def save_corrected_pressure(
                         g_corr.create_dataset(f"{channel}_Pa", data=signal, dtype="f4")
 
                         signal = np.ascontiguousarray(signal - signal.mean(dtype=WORK_DTYPE))
-                        signal = bandpass_filter(signal, FS, 1, analog_LP_filter[i])
                         clean = _cancel_noise(signal, nkd, FS)
                         g_rej.create_dataset(f"{channel}_Pa", data=clean, dtype="f4")
 

@@ -18,7 +18,8 @@ from __future__ import annotations
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, coherence, get_window, sosfiltfilt
+from scipy.signal import coherence, get_window
+
 
 from src.save_phase2.config_params import Config
 from src.checks.plot._style import apply_plot_style, resolve_figure_dir
@@ -37,11 +38,11 @@ CHANNELS = ("PH1_Pa", "PH2_Pa")
 
 
 def _preproc(x: np.ndarray, f_high: float) -> np.ndarray:
+    """Match pw_proc's pre-Wiener preprocessing: demean only (band limits are
+    applied as spectral masks at reporting time; f_high is unused, kept for
+    call-site compatibility)."""
     x = np.asarray(x, dtype=float)
-    x = x - x.mean()
-    sos = butter(3, [1.0, float(f_high)], btype="band", fs=FS, output="sos")
-    y = sosfiltfilt(sos, x)
-    return np.nan_to_num(y, nan=0.0, copy=False)
+    return x - x.mean()
 
 
 def _coh(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

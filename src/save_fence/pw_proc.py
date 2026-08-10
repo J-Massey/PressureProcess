@@ -3,8 +3,9 @@
 # Pipeline per (label, spacing, channel):
 #   raw PH -> apply phase1 H_fused (PH->NC, same TF for PH1 and PH2)
 #   -> apply fence's own NC->nkd FRF (raw H_fused)
-#   -> demean + bandpass(1 Hz, analog_LP)
-#   -> apply phase2-donor Wiener FIR kernel against bandpassed NC reference.
+#   -> demean -> apply phase2-donor Wiener FIR kernel against the demeaned NC
+#   reference. No digital band filtering; band limits (f_cut_Hz) are applied
+#   only as spectral masks at reporting time.
 #
 # Borrowed sources mirror save_bump:
 #   - PH TF: phase1's fused H_fused (fence PH calibs are not used in pw_proc)
@@ -19,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 import h5py
-from scipy.signal import butter, sosfiltfilt
 
 from src.core.apply_frf import apply_frf
 from src.core.wiener_filter_torch import apply_wiener_kernel
@@ -169,21 +169,15 @@ def save_corrected_pressure(
                 g_corrected = gL.create_group("frf_corrected_signals")
                 g_rejected = gL.create_group("fs_noise_rejected_signals")
 
-                def bandpass_filter(data, fs, f_low, f_high, order=3):
-                    sos = butter(order, [f_low, f_high], btype="band", fs=fs, output="sos")
-                    filtered = sosfiltfilt(sos, data)
-                    filtered = np.nan_to_num(filtered, nan=0.0, copy=False)
-                    return np.ascontiguousarray(filtered, dtype=WORK_DTYPE)
-
                 for sp in available:
                     g_corr = g_corrected.create_group(sp)
                     g_rej = g_rejected.create_group(sp)
 
                     # NC reference for Wiener: fence's own NC (production),
-                    # demeaned + bandpassed identically to the donor.
+                    # demeaned identically to the donor (band limits
+                    # are applied only as spectral masks at reporting time).
                     nkd = np.asarray(g_nkd[f"{sp}/NC_Pa"][:], dtype=WORK_DTYPE)
                     nkd = np.ascontiguousarray(nkd - nkd.mean(dtype=WORK_DTYPE))
-                    nkd = bandpass_filter(nkd, FS, 1, analog_LP_filter[i])
 
                     # Phase2 kernels live under 'close'; if fence requests
                     # 'far' (or any other spacing), fall back to 'close'.
@@ -227,7 +221,6 @@ def save_corrected_pressure(
                         d_corr.attrs["Re_tau"] = re_tau_pos
 
                         signal = np.ascontiguousarray(signal - signal.mean(dtype=WORK_DTYPE))
-                        signal = bandpass_filter(signal, FS, 1, analog_LP_filter[i])
 
                         if channel in c_per_channel:
                             clean = apply_wiener_kernel(

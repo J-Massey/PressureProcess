@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from src.band_limits import reported_band_f_cuts
+
 
 def _profile_name() -> str:
     return os.getenv("PRESSUREPROCESS_PROFILE", "").strip().lower()
@@ -35,7 +37,12 @@ class Config:
     U_TAU: tuple[float, float, float] = (0.537, 0.522, 0.506)
     U_E: tuple[float, float, float] = (14., 14., 14.)
     ANALOG_LP_FILTER: tuple[int, int, int] = (2100, 4700, 14100)
-    F_CUTS: tuple[float, float, float] = (1200.0, 4000.0, 10000.0)  # per-label anti-alias lowpass in Hz
+    # Reported-band upper edge per condition, computed in __post_init__ as
+    # min(pinhole Helmholtz-resonance guard, T+ = TPLUS_CUT resolution limit);
+    # see src/band_limits.py. NOT the analog anti-alias filter
+    # (ANALOG_LP_FILTER) and NOT a signal filter: wall-pressure content above
+    # F_CUTS is resonance-contaminated and is not reported.
+    F_CUTS: tuple[float, float, float] = field(init=False)
     U_TAU_REL_UNC: tuple[float, float, float] = (0.2, 0.1, 0.05)
     SPACINGS: tuple[str, ...] = field(
         default_factory=lambda: ("close", "far")
@@ -61,7 +68,9 @@ class Config:
     P_ATM: float = 101_325.0
     DELTA: tuple[float, float, float] = (0.035, 0.035, 0.035)  # m, bl-height of channel
     TDEG: tuple[float, float, float] = (18.0, 20.0, 22.0)
-    TPLUS_CUT: float = 10.0  # picked so that we cut at half the inner peak
+    # T+ >= TPLUS_CUT spatial-resolution limit entering F_CUTS (picked so that
+    # we cut no closer than half the inner-peak time scale).
+    TPLUS_CUT: float = 10.0
 
     # --- Data paths ---
     RAW_CAL_BASE: str = field(init=False)
@@ -109,5 +118,9 @@ class Config:
             "NKD_PROCESSED_FILE",
             f"{root}/pressure/F_freestreamp_SU_production.hdf5",
         )
+        object.__setattr__(self, "F_CUTS", reported_band_f_cuts(
+            psigs=self.PSIGS, tdegs=self.TDEG, u_taus=self.U_TAU,
+            tplus_cut=self.TPLUS_CUT, p_atm=self.P_ATM,
+            psi_to_pa=self.PSI_TO_PA, R=self.R))
 
     

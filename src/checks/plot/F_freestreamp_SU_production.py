@@ -58,8 +58,8 @@ def plot_fs_raw():
         axes = np.atleast_1d(axes)
         for ax, sp in zip(axes, spacing_order):
             ax.set_title(f"NC--{sp} run")
-            ax.set_xlabel(r"$T^+$")
-        axes[0].set_ylabel(r"${f \phi_{pp}}_{\mathrm{prod.}}^+$")
+            ax.set_xlabel(r"$f$ [Hz]")
+        axes[0].set_ylabel(r"$\phi_{pp}$ [Pa$^2$/Hz]")
 
         for i, label in enumerate(labels):
             g_label = g_root[label]
@@ -73,11 +73,10 @@ def plot_fs_raw():
                     continue
                 nc_raw = g_label[f"{sp}/NC_Pa"][:]
                 f, pxx = compute_spec(nc_raw, fs=FS, nperseg=NPERSEG)
-                t_plus = (u_tau**2) / (nu * f)
-                norm_factor = (rho**2) * (u_tau**4)
+                mask = f > 0.0
                 axes[j].loglog(
-                    t_plus,
-                    f * pxx / norm_factor,
+                    f[mask],
+                    pxx[mask],
                     label=label,
                     color=COLOURS[i % len(COLOURS)],
                 )

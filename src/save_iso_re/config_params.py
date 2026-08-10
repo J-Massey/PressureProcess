@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src.band_limits import reported_band_f_cuts
+
 
 @dataclass(frozen=False)
 class Config:
@@ -29,7 +31,9 @@ class Config:
     U_TAU: tuple[float, float, float] = (0.537, 0.522, 0.506)
     U_E: tuple[float, float, float] = (14.0, 14.0, 14.0)
     ANALOG_LP_FILTER: tuple[int, int, int] = (2100, 4700, 14100)
-    F_CUTS: tuple[float, float, float] = (1200.0, 4000.0, 10000.0)
+    # Reported-band upper edge per condition; computed in __post_init__ as
+    # min(Helmholtz-resonance guard, T+ = TPLUS_CUT limit), see src/band_limits.py.
+    F_CUTS: tuple[float, float, float] = field(init=False)
     U_TAU_REL_UNC: tuple[float, float, float] = (0.2, 0.1, 0.05)
 
     # iso_re has only the "close" pinhole spacing.
@@ -87,3 +91,7 @@ class Config:
         object.__setattr__(self, "PH_PROCESSED_FILE", f"{root}/pressure/G_wallp_SU_production.hdf5")
         object.__setattr__(self, "NKD_RAW_FILE", f"{root}/pressure/F_freestreamp_SU_raw.hdf5")
         object.__setattr__(self, "NKD_PROCESSED_FILE", f"{root}/pressure/F_freestreamp_SU_production.hdf5")
+        object.__setattr__(self, "F_CUTS", reported_band_f_cuts(
+            psigs=self.PSIGS, tdegs=self.TDEG, u_taus=self.U_TAU,
+            tplus_cut=self.TPLUS_CUT, p_atm=self.P_ATM,
+            psi_to_pa=self.PSI_TO_PA, R=self.R))
