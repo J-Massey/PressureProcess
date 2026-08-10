@@ -53,7 +53,7 @@ def save_raw_fs_pressure(
     os.makedirs(Path(fs_raw).parent, exist_ok=True)
 
     with h5py.File(fs_raw, "w") as hf:
-        hf.attrs["title"] = "Freestream pressure (nose-cone) - raw \& calibration [iso_re]"
+        hf.attrs["title"] = r"Freestream pressure (nose-cone) - raw \& calibration [iso_re]"
         hf.attrs["fs_Hz"] = FS
         hf.attrs["Ue_m_per_s"] = np.asarray(Ue, float)
         hf.attrs["DAQ"] = "24-bit"

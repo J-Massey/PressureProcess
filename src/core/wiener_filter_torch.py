@@ -618,11 +618,3 @@ def apply_wiener_kernel(
     if return_noise_estimate:
         return p_clean_np, pb_hat.detach().cpu().numpy()
     return p_clean_np
-
-
-if __name__ == "__main__":
-    import os
-    fns = ["src/save/save_pw_proc.py",
-           "src/plot/from_data/G_wallp_SU_production.py"]
-    for fn in fns:
-        os.system(f"python {fn}")

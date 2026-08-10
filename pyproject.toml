@@ -31,3 +31,6 @@ include = ["src", "src.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# conftest.py exports the synthetic-fixture builders that the test modules
+# import by name.
+pythonpath = ["."]

@@ -24,7 +24,7 @@ def run_all() -> None:
 
     if dataset_name.startswith("bump"):
         bump_raw.plot_fs_raw()
-        bump_raw.plot_raw()
+        bump_raw.plot_wall_raw()
     else:
         F_freestreamp_SU_raw.plot_fs_raw()
         G_wallp_SU_raw.plot_raw()

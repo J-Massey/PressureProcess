@@ -88,7 +88,7 @@ def save_raw_fs_pressure(
 
     with h5py.File(fs_raw, 'w') as hf:
         # --- file-level metadata ---
-        hf.attrs['title'] = "Freestream pressure (nose-cone) - raw \& calibration"
+        hf.attrs['title'] = r"Freestream pressure (nose-cone) - raw \& calibration"
         hf.attrs['fs_Hz'] = FS
         hf.attrs['Ue_m_per_s'] = np.asarray(Ue, float)
         hf.attrs['DAQ'] = "24-bit"

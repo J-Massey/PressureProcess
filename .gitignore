@@ -1,10 +1,21 @@
+# Datasets and derived report inputs (large, regenerable / externally managed)
 /data
 /report/data
-/.env
-.npy
-.zip
 *.npy
 *.zip
-# *.png
-/.claude/
-*cpython*
+
+# Secrets
+/.env
+
+# Python build & cache artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / editor cruft
+.DS_Store
+._*

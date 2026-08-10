@@ -60,7 +60,7 @@ def save_raw_ph_pressure(
     os.makedirs(Path(ph_raw).parent, exist_ok=True)
 
     with h5py.File(ph_raw, "w") as hf:
-        hf.attrs["title"] = "Wall-pressure (pin-hole) - raw \& calibration [phase2]"
+        hf.attrs["title"] = r"Wall-pressure (pin-hole) - raw \& calibration [phase2]"
         hf.attrs["fs_Hz"] = FS
         hf.attrs["Ue_m_per_s"] = np.asarray(Ue, float)
         hf.attrs["DAQ"] = "24-bit NI-USB-6363"
